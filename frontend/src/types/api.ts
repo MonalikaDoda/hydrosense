@@ -1,9 +1,11 @@
 export type SourceLabel =
-  | "esp32"
+  | "arduino"
   | "simulated_sensor"
   | "simulated_leak"
   | "public_dataset"
-  | "operator_report";
+  | "operator_report"
+  | "community_report"
+  | "forecast";
 
 export type IncidentStatus =
   | "open"
@@ -19,13 +21,17 @@ export type HazardType =
   | "flood_risk"
   | "suspected_leak";
 
+export type RiskTier = "green" | "yellow" | "orange" | "red" | "unknown";
+
+export type CommunityReportStatus = "flooded" | "passable" | "not_flooded";
+
 export interface SensorReading {
   device_id: string;
   location_id: string;
   water_depth_cm: number;
   distance_cm: number;
   timestamp: string;
-  source: "esp32" | "simulated_sensor";
+  source: "arduino" | "simulated_sensor";
 }
 
 export interface LeakMeasurement {
@@ -65,10 +71,125 @@ export interface DashboardSummary {
   incidents_by_status: Partial<Record<IncidentStatus, number>>;
   latest_reading_at: string | null;
   generated_at: string;
+  active_flood_alerts?: number;
+  total_hotspots?: number;
+  active_community_reports?: number;
 }
 
 export interface HealthResponse {
   status: string;
   service: string;
   version: string;
+}
+
+export interface UnderpassHotspot {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  coord_status?: string;
+  fix_dates?: string[];
+  bypass?: string | null;
+}
+
+export interface UnderpassRiskItem {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  tier: RiskTier;
+  ratio: number | null;
+  limit: {
+    rain1h_mm?: number | null;
+    rain3h_mm?: number | null;
+  };
+  limit_is_own: boolean;
+  evidence: string;
+  note: string;
+  forecast: {
+    max_1h_mm: number | null;
+    max_3h_mm: number | null;
+    window_start: string | null;
+    window_end: string | null;
+  };
+  history: {
+    recorded_floods: number;
+    floods_with_at_least_this_rain_3h: number;
+  } | null;
+  why: string;
+}
+
+export interface UnderpassRiskResponse {
+  generated_at: string;
+  forecast_model_used: string;
+  lookahead_hours: number;
+  disclaimer: string;
+  credit: string;
+  hotspots: UnderpassRiskItem[];
+}
+
+export interface CommunityReportCreate {
+  hotspot_id: string;
+  status: CommunityReportStatus;
+  notes?: string | null;
+  image_url?: string | null;
+  ai_assessment?: Record<string, unknown> | null;
+}
+
+export interface CommunityReport {
+  report_id: string;
+  hotspot_id: string;
+  status: CommunityReportStatus;
+  timestamp: string;
+  notes?: string | null;
+  image_url?: string | null;
+  is_active: boolean;
+  source: SourceLabel;
+  ai_assessment?: Record<string, unknown> | null;
+}
+
+export interface UnderpassEvaluationMetrics {
+  n_rows: number;
+  n_storm_days: number;
+  per_hotspot_thresholds: {
+    floods_caught: number;
+    floods_missed: number;
+    false_alarms: number;
+    correct_clear: number;
+    n_flooded_rows: number;
+    n_clear_rows: number;
+  };
+  pooled_only_baseline: {
+    floods_caught: number;
+    floods_missed: number;
+    false_alarms: number;
+    correct_clear: number;
+    n_flooded_rows: number;
+    n_clear_rows: number;
+  };
+  per_storm_day: Array<{
+    date: string;
+    floods_caught: number;
+    floods_missed: number;
+    false_alarms: number;
+    correct_clear: number;
+    n_flooded_rows: number;
+    n_clear_rows: number;
+  }>;
+  notes: string[];
+}
+
+export interface UnderpassEventRecord {
+  event_id: string;
+  date: string;
+  hotspot_id: string;
+  underpass_name_in_source: string;
+  outcome: "flooded" | "clear";
+  what_happened: string;
+  time_text?: string | null;
+  time_confidence?: string | null;
+  rain_reported_in_article?: string | null;
+  notes?: string | null;
+  source_url?: string | null;
+  source_publisher?: string | null;
 }

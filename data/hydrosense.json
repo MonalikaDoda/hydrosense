@@ -1,0 +1,83 @@
+{
+  "readings": [],
+  "incidents": [],
+  "reports": [
+    {
+      "report_id": "877ea667-1825-46e8-8167-db9ee09fab35",
+      "hotspot_id": "zakhira",
+      "status": "flooded",
+      "timestamp": "2026-10-10T11:08:41.870601Z",
+      "notes": "Water accumulating under railway bridge",
+      "image_url": null,
+      "is_active": true,
+      "source": "community_report",
+      "ai_assessment": null
+    },
+    {
+      "report_id": "1102e461-5c2b-46de-8364-7c93eb1d97e8",
+      "hotspot_id": "zakhira",
+      "status": "flooded",
+      "timestamp": "2026-10-10T11:11:44.294816Z",
+      "notes": "Water accumulating under railway bridge",
+      "image_url": null,
+      "is_active": true,
+      "source": "community_report",
+      "ai_assessment": null
+    },
+    {
+      "report_id": "db72546d-f9a9-4622-ae71-1dc16c4a2643",
+      "hotspot_id": "minto_bridge",
+      "status": "flooded",
+      "timestamp": "2026-10-10T11:12:44.173635Z",
+      "notes": "Test observation",
+      "image_url": null,
+      "is_active": true,
+      "source": "community_report",
+      "ai_assessment": null
+    },
+    {
+      "report_id": "617d993e-67b4-4aee-aa95-b00231eadcf6",
+      "hotspot_id": "zakhira",
+      "status": "flooded",
+      "timestamp": "2026-10-10T11:13:26.920486Z",
+      "notes": "Water accumulating under railway bridge",
+      "image_url": null,
+      "is_active": true,
+      "source": "community_report",
+      "ai_assessment": null
+    },
+    {
+      "report_id": "1289aaef-7e74-4644-b965-e7f5cbe89c0f",
+      "hotspot_id": "zakhira",
+      "status": "flooded",
+      "timestamp": "2026-10-10T11:24:19.197992Z",
+      "notes": "Water accumulating under railway bridge",
+      "image_url": null,
+      "is_active": true,
+      "source": "community_report",
+      "ai_assessment": null
+    },
+    {
+      "report_id": "c567cf7b-a53e-4080-8c6b-3f0dc295be0d",
+      "hotspot_id": "zakhira",
+      "status": "flooded",
+      "timestamp": "2026-10-10T12:37:50.749737Z",
+      "notes": "Water accumulating under railway bridge",
+      "image_url": null,
+      "is_active": true,
+      "source": "community_report",
+      "ai_assessment": null
+    },
+    {
+      "report_id": "036263c6-52cc-4134-981e-c4afa383264f",
+      "hotspot_id": "zakhira",
+      "status": "flooded",
+      "timestamp": "2026-10-10T12:44:30.541730Z",
+      "notes": "Water accumulating under railway bridge",
+      "image_url": null,
+      "is_active": true,
+      "source": "community_report",
+      "ai_assessment": null
+    }
+  ]
+}

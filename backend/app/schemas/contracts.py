@@ -11,10 +11,13 @@ class ContractModel(BaseModel):
 
 class SourceLabel(StrEnum):
     ESP32 = "esp32"
+    ARDUINO = "arduino"
     SIMULATED_SENSOR = "simulated_sensor"
     SIMULATED_LEAK = "simulated_leak"
     PUBLIC_DATASET = "public_dataset"
     OPERATOR_REPORT = "operator_report"
+    COMMUNITY_REPORT = "community_report"
+    FORECAST = "forecast"
 
 
 class IncidentStatus(StrEnum):
@@ -38,6 +41,20 @@ class HazardType(StrEnum):
     SUSPECTED_LEAK = "suspected_leak"
 
 
+class RiskTier(StrEnum):
+    GREEN = "green"
+    YELLOW = "yellow"
+    ORANGE = "orange"
+    RED = "red"
+    UNKNOWN = "unknown"
+
+
+class CommunityReportStatus(StrEnum):
+    FLOODED = "flooded"
+    PASSABLE = "passable"
+    NOT_FLOODED = "not_flooded"
+
+
 class SensorReading(ContractModel):
     device_id: str = Field(min_length=1, max_length=100)
     location_id: str = Field(min_length=1, max_length=100)
@@ -48,8 +65,8 @@ class SensorReading(ContractModel):
 
     @model_validator(mode="after")
     def require_sensor_source(self) -> "SensorReading":
-        if self.source not in {SourceLabel.ESP32, SourceLabel.SIMULATED_SENSOR}:
-            raise ValueError("sensor reading source must be esp32 or simulated_sensor")
+        if self.source not in {SourceLabel.ESP32, SourceLabel.ARDUINO, SourceLabel.SIMULATED_SENSOR}:
+            raise ValueError("sensor reading source must be arduino, esp32 or simulated_sensor")
         return self
 
 
@@ -96,9 +113,98 @@ class DashboardSummary(ContractModel):
     incidents_by_status: dict[IncidentStatus, int]
     latest_reading_at: AwareDatetime | None = None
     generated_at: AwareDatetime
+    active_flood_alerts: int = Field(default=0, ge=0)
+    total_hotspots: int = Field(default=16, ge=0)
+    active_community_reports: int = Field(default=0, ge=0)
 
 
 class HealthResponse(ContractModel):
     status: str
     service: str
     version: str
+
+
+class UnderpassHotspot(ContractModel):
+    id: str
+    name: str
+    lat: float
+    lon: float
+    coord_status: str = "approximate"
+    fix_dates: list[str] = Field(default_factory=list)
+    bypass: str | None = None
+
+
+class ForecastWindow(ContractModel):
+    max_1h_mm: float | None = None
+    max_3h_mm: float | None = None
+    window_start: str | None = None
+    window_end: str | None = None
+
+
+class UnderpassRiskItem(ContractModel):
+    id: str
+    name: str
+    lat: float
+    lon: float
+    tier: RiskTier
+    ratio: float | None = None
+    limit: dict[str, float | None] = Field(default_factory=dict)
+    limit_is_own: bool = False
+    evidence: str = ""
+    note: str = ""
+    forecast: ForecastWindow
+    history: dict[str, Any] | None = None
+    why: str = ""
+
+
+class UnderpassRiskResponse(ContractModel):
+    generated_at: str
+    forecast_model_used: str
+    lookahead_hours: int
+    disclaimer: str
+    credit: str
+    hotspots: list[UnderpassRiskItem]
+
+
+class CommunityReportCreate(ContractModel):
+    hotspot_id: str = Field(min_length=1, max_length=100)
+    status: CommunityReportStatus
+    notes: str | None = Field(default=None, max_length=1000)
+    image_url: str | None = Field(default=None, max_length=5_000_000)
+    ai_assessment: dict[str, Any] | None = None
+
+
+class CommunityReport(ContractModel):
+    report_id: UUID
+    hotspot_id: str
+    status: CommunityReportStatus
+    timestamp: AwareDatetime
+    notes: str | None = None
+    image_url: str | None = None
+    is_active: bool = True
+    source: SourceLabel = SourceLabel.COMMUNITY_REPORT
+    ai_assessment: dict[str, Any] | None = None
+
+
+class UnderpassEvaluationMetrics(ContractModel):
+    n_rows: int
+    n_storm_days: int
+    per_hotspot_thresholds: dict[str, Any]
+    pooled_only_baseline: dict[str, Any]
+    per_storm_day: list[dict[str, Any]]
+    notes: list[str]
+
+
+class UnderpassEventRecord(ContractModel):
+    event_id: str
+    date: str
+    hotspot_id: str
+    underpass_name_in_source: str
+    outcome: str
+    what_happened: str
+    time_text: str | None = None
+    time_confidence: str | None = None
+    rain_reported_in_article: str | None = None
+    notes: str | None = None
+    source_url: str | None = None
+    source_publisher: str | None = None
