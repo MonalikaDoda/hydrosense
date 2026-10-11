@@ -1,9 +1,12 @@
 # Hardware Sprint 1 Handoff
 
-**Status: Hardware integration in progress.** No physical sensor reading has been received by the
-backend. No Arduino firmware file and no recorded demonstration video are present anywhere in
-this repository as of this report; neither is fabricated or linked here. Rasleen owns the hardware
-build per the project specification, but its artifacts have not yet been committed.
+**Status: Hardware integration in progress.** A real Arduino firmware sketch
+([`hydrosense_monitor.ino`](hydrosense_monitor.ino)) is now committed, written by Rasleen. It reads
+the HC-SR04 sensor, computes water depth from a reference distance, and shows the distance, depth,
+and a NORMAL/CAUTION/HIGH status on an attached OLED display over serial. It does **not** currently
+connect to Wi-Fi or post readings to the backend — no physical sensor reading has reached the
+deployed backend yet. No recorded demonstration video is present in this repository as of this
+report; none is fabricated or linked here.
 
 ## Intended bill of materials
 
@@ -14,9 +17,9 @@ build per the project specification, but its artifacts have not yet been committ
 | OLED display (optional, per project spec) | Local readout of distance, depth, and threshold state |
 | Voltage divider / logic-level shifter | Steps the 5 V `ECHO` signal down to a safe 3.3 V GPIO input |
 
-The software vertical slice uses `scripts/simulate_sensor.py` until physical hardware is available. The simulator and Arduino must send the same `SensorReading` JSON contract.
+The software vertical slice uses `scripts/simulate_sensor.py` until physical hardware posts directly to the backend. The simulator and Arduino must send the same `SensorReading` JSON contract; the current firmware sketch does not yet implement that network call.
 
-Physical hardware work is outside the currently completed software phase. No bench, serial, Wi-Fi, or AWS IoT result has been verified in this repository; the checklist below remains a handoff, not evidence of completion.
+Bench calibration, Wi-Fi connectivity, and posting to the backend are outside the currently completed software phase. No bench, serial, Wi-Fi, or AWS IoT result has been verified in this repository; the checklist below remains a handoff, not evidence of completion.
 
 ## Required bench verification
 
