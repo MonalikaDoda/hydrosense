@@ -5,7 +5,7 @@ from threading import RLock
 from typing import Protocol
 from uuid import UUID
 
-from app.schemas import CommunityReport, Incident, IncidentStatus, SensorReading
+from app.schemas import AssessmentStatus, CommunityReport, Incident, IncidentStatus, SensorReading
 
 
 class StorageRepository(Protocol):
@@ -40,6 +40,15 @@ class StorageRepository(Protocol):
         max_age_minutes: int = 45,
         limit: int = 1000,
     ) -> list[CommunityReport]: ...
+
+    def update_report_assessment(
+        self,
+        report_id: UUID,
+        *,
+        image_key: str | None,
+        assessment_status: AssessmentStatus,
+        ai_assessment: dict[str, object] | None,
+    ) -> CommunityReport | None: ...
 
 
 class MemoryRepository:
@@ -126,6 +135,27 @@ class MemoryRepository:
                 break
         return out
 
+    def update_report_assessment(
+        self,
+        report_id: UUID,
+        *,
+        image_key: str | None,
+        assessment_status: AssessmentStatus,
+        ai_assessment: dict[str, object] | None,
+    ) -> CommunityReport | None:
+        existing = self.get_community_report(report_id)
+        if existing is None:
+            return None
+        updated = existing.model_copy(
+            update={
+                "image_key": image_key,
+                "assessment_status": assessment_status,
+                "ai_assessment": ai_assessment,
+            }
+        )
+        self.reports = [updated if item.report_id == report_id else item for item in self.reports]
+        return updated
+
 
 class JsonFileRepository(MemoryRepository):
     def __init__(self, path: Path) -> None:
@@ -188,3 +218,22 @@ class JsonFileRepository(MemoryRepository):
             if created:
                 self._save()
             return created
+
+    def update_report_assessment(
+        self,
+        report_id: UUID,
+        *,
+        image_key: str | None,
+        assessment_status: AssessmentStatus,
+        ai_assessment: dict[str, object] | None,
+    ) -> CommunityReport | None:
+        with self._lock:
+            updated = super().update_report_assessment(
+                report_id,
+                image_key=image_key,
+                assessment_status=assessment_status,
+                ai_assessment=ai_assessment,
+            )
+            if updated is not None:
+                self._save()
+            return updated

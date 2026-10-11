@@ -1,4 +1,5 @@
 from app.schemas.contracts import (
+    AssessmentStatus,
     CommunityReport,
     CommunityReportCreate,
     CommunityReportStatus,
@@ -7,6 +8,9 @@ from app.schemas.contracts import (
     ForecastWindow,
     HazardType,
     HealthResponse,
+    ImageAssessRequest,
+    ImageUploadUrlRequest,
+    ImageUploadUrlResponse,
     Incident,
     IncidentStatus,
     IncidentStatusUpdate,
@@ -24,6 +28,7 @@ from app.schemas.contracts import (
 )
 
 __all__ = [
+    "AssessmentStatus",
     "CommunityReport",
     "CommunityReportCreate",
     "CommunityReportStatus",
@@ -32,6 +37,9 @@ __all__ = [
     "ForecastWindow",
     "HazardType",
     "HealthResponse",
+    "ImageAssessRequest",
+    "ImageUploadUrlRequest",
+    "ImageUploadUrlResponse",
     "Incident",
     "IncidentStatus",
     "IncidentStatusUpdate",

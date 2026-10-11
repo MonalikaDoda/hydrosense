@@ -150,9 +150,25 @@ export interface CommunityReport {
   timestamp: string;
   notes?: string | null;
   image_url?: string | null;
+  image_key?: string | null;
+  assessment_status: "not_requested" | "pending" | "completed" | "failed";
   is_active: boolean;
   source: SourceLabel;
-  ai_assessment?: Record<string, unknown> | null;
+  ai_assessment?: ImageAssessment | { error: string } | null;
+}
+
+export interface ImageAssessment {
+  model_id: string;
+  assessed_at: string;
+  summary: string;
+  disclaimer: string;
+}
+
+export interface ImageUploadUrlResponse {
+  upload_url: string;
+  fields: Record<string, string>;
+  image_key: string;
+  max_bytes: number;
 }
 
 export interface UnderpassEvaluationMetrics {

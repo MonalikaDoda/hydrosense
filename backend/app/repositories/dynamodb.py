@@ -8,7 +8,7 @@ import boto3
 from boto3.dynamodb.conditions import Attr
 from boto3.dynamodb.types import TypeSerializer
 
-from app.schemas import CommunityReport, Incident, IncidentStatus, SensorReading
+from app.schemas import AssessmentStatus, CommunityReport, Incident, IncidentStatus, SensorReading
 
 
 class DynamoDbTable(Protocol):
@@ -200,6 +200,27 @@ class DynamoDbRepository:
                 continue
             reports.append(report.model_copy(update={"is_active": is_fresh}))
         return sorted(reports, key=lambda item: item.timestamp, reverse=True)[:limit]
+
+    def update_report_assessment(
+        self,
+        report_id: UUID,
+        *,
+        image_key: str | None,
+        assessment_status: AssessmentStatus,
+        ai_assessment: dict[str, Any] | None,
+    ) -> CommunityReport | None:
+        existing = self.get_community_report(report_id)
+        if existing is None:
+            return None
+        updated = existing.model_copy(
+            update={
+                "image_key": image_key,
+                "assessment_status": assessment_status,
+                "ai_assessment": ai_assessment,
+            }
+        )
+        self.reports_table.put_item(Item=_dynamodb_item(updated))
+        return updated
 
     @staticmethod
     def _scan_all(table: DynamoDbTable, max_items: int) -> list[dict[str, Any]]:

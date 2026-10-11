@@ -5,10 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 
 from app.repositories import StorageRepository
 from app.schemas import (
+    AssessmentStatus,
     CommunityReport,
     CommunityReportCreate,
     DashboardSummary,
     HazardType,
+    ImageAssessRequest,
+    ImageUploadUrlRequest,
+    ImageUploadUrlResponse,
     Incident,
     IncidentStatus,
     IncidentStatusUpdate,
@@ -19,6 +23,10 @@ from app.schemas import (
     UnderpassRiskResponse,
 )
 from app.services import (
+    BedrockAssessmentError,
+    BedrockAssessmentService,
+    EvidenceStorageError,
+    EvidenceStorageService,
     InvalidReadingTimestamp,
     InvalidStatusTransition,
     UnderpassRiskService,
@@ -219,6 +227,77 @@ def create_community_report(
             update={"is_active": existing.timestamp >= datetime.now(UTC) - timedelta(minutes=45)}
         )
     return report
+
+
+def get_evidence_service(request: Request) -> EvidenceStorageService:
+    return request.app.state.evidence_service
+
+
+def get_assessment_service(request: Request) -> BedrockAssessmentService:
+    return request.app.state.assessment_service
+
+
+@router.post(
+    "/underpass/reports/{report_id}/image-upload-url",
+    response_model=ImageUploadUrlResponse,
+)
+def create_image_upload_url(
+    report_id: UUID,
+    payload: ImageUploadUrlRequest,
+    repository: StorageRepository = Depends(get_repository),
+    evidence_service: EvidenceStorageService = Depends(get_evidence_service),
+) -> ImageUploadUrlResponse:
+    if repository.get_community_report(report_id) is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    try:
+        result = evidence_service.create_upload_post(str(report_id), payload.content_type)
+    except EvidenceStorageError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return ImageUploadUrlResponse.model_validate(result)
+
+
+@router.post("/underpass/reports/{report_id}/assess", response_model=CommunityReport)
+def assess_report_image(
+    report_id: UUID,
+    payload: ImageAssessRequest,
+    repository: StorageRepository = Depends(get_repository),
+    evidence_service: EvidenceStorageService = Depends(get_evidence_service),
+    assessment_service: BedrockAssessmentService = Depends(get_assessment_service),
+) -> CommunityReport:
+    report = repository.get_community_report(report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if not evidence_service.key_belongs_to_report(str(report_id), payload.image_key):
+        raise HTTPException(status_code=403, detail="Image key does not belong to this report")
+
+    pending = repository.update_report_assessment(
+        report_id,
+        image_key=payload.image_key,
+        assessment_status=AssessmentStatus.PENDING,
+        ai_assessment=None,
+    )
+    if pending is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    try:
+        image_bytes, content_type = evidence_service.fetch_image(payload.image_key)
+        assessment = assessment_service.assess_image(image_bytes, content_type)
+    except (EvidenceStorageError, BedrockAssessmentError) as error:
+        failed = repository.update_report_assessment(
+            report_id,
+            image_key=payload.image_key,
+            assessment_status=AssessmentStatus.FAILED,
+            ai_assessment={"error": str(error)},
+        )
+        return failed if failed is not None else pending
+
+    completed = repository.update_report_assessment(
+        report_id,
+        image_key=payload.image_key,
+        assessment_status=AssessmentStatus.COMPLETED,
+        ai_assessment=assessment,
+    )
+    return completed if completed is not None else pending
 
 
 # ---------------------------------------------------------------------------

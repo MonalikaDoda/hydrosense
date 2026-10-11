@@ -62,6 +62,13 @@ class CommunityReportStatus(StrEnum):
     NOT_FLOODED = "not_flooded"
 
 
+class AssessmentStatus(StrEnum):
+    NOT_REQUESTED = "not_requested"
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class SensorReading(ContractModel):
     device_id: str = Field(min_length=1, max_length=100)
     location_id: str = Field(min_length=1, max_length=100)
@@ -200,9 +207,26 @@ class CommunityReport(ContractModel):
     timestamp: AwareDatetime
     notes: str | None = None
     image_url: str | None = None
+    image_key: str | None = None
+    assessment_status: AssessmentStatus = AssessmentStatus.NOT_REQUESTED
     is_active: bool = True
     source: SourceLabel = SourceLabel.COMMUNITY_REPORT
     ai_assessment: dict[str, Any] | None = None
+
+
+class ImageUploadUrlRequest(ContractModel):
+    content_type: Literal["image/jpeg", "image/png", "image/webp"]
+
+
+class ImageUploadUrlResponse(ContractModel):
+    upload_url: str
+    fields: dict[str, str]
+    image_key: str
+    max_bytes: int
+
+
+class ImageAssessRequest(ContractModel):
+    image_key: str = Field(min_length=1, max_length=512)
 
 
 class EvaluationCounts(ContractModel):

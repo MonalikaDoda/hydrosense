@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     underpass_data_dir: Path | None = None
     demo_latitude: float = 28.6139
     demo_longitude: float = 77.2090
+    evidence_bucket_name: str | None = None
+    bedrock_model_id: str = "apac.amazon.nova-lite-v1:0"
+    bedrock_region: str | None = None
+    max_evidence_image_bytes: int = Field(default=5_000_000, ge=1, le=20_000_000)
 
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),

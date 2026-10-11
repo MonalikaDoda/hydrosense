@@ -12,7 +12,7 @@ from app.config import Settings
 from app.main import create_app
 from app.repositories import MemoryRepository
 from app.services import UnderpassRiskService
-from app.services.underpass_risk import assess_hotspot
+from app.services.underpass_risk import IST, assess_hotspot
 
 
 @pytest.fixture
@@ -408,3 +408,82 @@ def test_dashboard_summary_does_not_treat_missing_dataset_as_zero_risk() -> None
     assert response.json()["active_flood_alerts"] is None
     assert response.json()["underpass_dataset"] == "unavailable"
     assert response.json()["flood_risk_status"] == "unknown"
+
+
+REAL_DATASET_DIR = Path("data/underpass")
+
+
+def _real_dataset_service() -> UnderpassRiskService:
+    return UnderpassRiskService(Settings(_env_file=None), data_dir=REAL_DATASET_DIR)
+
+
+def test_real_recovered_dataset_loads_and_matches_documented_counts() -> None:
+    service = _real_dataset_service()
+
+    assert service.is_available is True
+    assert len(service.get_hotspots()) == 16
+    assert {h["id"] for h in service.get_hotspots()} >= {"minto_bridge", "pul_prahladpur", "zakhira"}
+
+    metrics = service.get_metrics()
+    assert metrics["n_rows"] == 46
+    assert metrics["n_storm_days"] == 15
+    assert metrics["per_hotspot_thresholds"]["n_flooded_rows"] == 37
+    assert metrics["per_hotspot_thresholds"]["n_clear_rows"] == 9
+
+    events = service.get_events()
+    assert len(events) == 46
+    assert {e["outcome"] for e in events} <= {"flooded", "clear"}
+
+
+def test_real_dataset_risk_endpoint_is_unknown_without_usable_forecast() -> None:
+    service = _real_dataset_service()
+    service._fetch_live_forecast = lambda: ([], "offline_test")  # type: ignore[method-assign]
+    client = TestClient(create_app(MemoryRepository(), service))
+
+    response = client.get("/api/v1/risk")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["hotspots"]) == 16
+    assert data["forecast_status"] == "unavailable"
+    assert {hotspot["tier"] for hotspot in data["hotspots"]} == {"unknown"}
+    for hotspot in data["hotspots"]:
+        assert hotspot["ratio"] is None
+
+
+def test_real_dataset_uses_own_hotspot_threshold_not_pooled_default() -> None:
+    """Minto Bridge has its own 3.5mm/1h, 6.3mm/3h threshold in thresholds.json,
+    distinct from the 2.2mm/4.4mm pooled default used by hotspots without evidence."""
+    service = _real_dataset_service()
+    hotspot_ids = [h["id"] for h in service.get_hotspots()]
+    target_index = hotspot_ids.index("minto_bridge")
+
+    now = datetime.now(IST)
+    base = now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=2)
+    times = [base + timedelta(hours=offset) for offset in range(30)]
+    time_strings = [t.replace(tzinfo=None).isoformat() for t in times]
+
+    def build_result(rain_hours: set[int]) -> dict:
+        precipitation = [2.2 if offset in rain_hours else 0.0 for offset in range(30)]
+        return {"hourly": {"time": time_strings, "precipitation": precipitation}}
+
+    rainy_offsets = {6, 7, 8}  # three consecutive hours -> 6.6mm/3h, above Minto Bridge's 6.3mm limit
+    results = [
+        build_result(rainy_offsets) if index == target_index else build_result(set())
+        for index in range(len(hotspot_ids))
+    ]
+    service._fetch_live_forecast = lambda: (results, "offline_test")  # type: ignore[method-assign]
+    client = TestClient(create_app(MemoryRepository(), service))
+
+    response = client.get("/api/v1/risk")
+    assert response.status_code == 200
+    data = response.json()
+
+    minto = next(h for h in data["hotspots"] if h["id"] == "minto_bridge")
+    assert minto["limit"]["rain3h_mm"] == pytest.approx(6.3, abs=0.05)
+    assert minto["limit_is_own"] is True
+    assert minto["tier"] in {"orange", "red"}
+    assert minto["forecast"]["max_3h_mm"] == pytest.approx(6.6, abs=0.05)
+
+    others_still_green = [h for h in data["hotspots"] if h["id"] != "minto_bridge"]
+    assert all(h["tier"] == "green" for h in others_still_green)

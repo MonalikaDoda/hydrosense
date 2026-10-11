@@ -3,6 +3,7 @@ import type {
   CommunityReportCreate,
   DashboardSummary,
   HealthResponse,
+  ImageUploadUrlResponse,
   Incident,
   IncidentStatus,
   SensorReading,
@@ -131,4 +132,46 @@ export async function submitCommunityReport(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+}
+
+export async function createImageUploadUrl(
+  reportId: string,
+  contentType: "image/jpeg" | "image/png" | "image/webp",
+): Promise<ImageUploadUrlResponse> {
+  return mutationRequest<ImageUploadUrlResponse>(
+    `/api/v1/underpass/reports/${reportId}/image-upload-url`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content_type: contentType }),
+    },
+  );
+}
+
+export async function uploadEvidenceImage(
+  uploadUrl: string,
+  fields: Record<string, string>,
+  file: File,
+): Promise<void> {
+  const form = new FormData();
+  Object.entries(fields).forEach(([key, value]) => form.append(key, value));
+  form.append("file", file);
+  const response = await fetch(uploadUrl, { method: "POST", body: form });
+  if (!response.ok) {
+    throw new Error(`Image upload failed with status ${response.status}`);
+  }
+}
+
+export async function assessReportImage(
+  reportId: string,
+  imageKey: string,
+): Promise<CommunityReport> {
+  return mutationRequest<CommunityReport>(
+    `/api/v1/underpass/reports/${reportId}/assess`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_key: imageKey }),
+    },
+  );
 }

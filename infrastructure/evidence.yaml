@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  HydroSense development community-report image evidence - one private,
+  encrypted S3 bucket for Bedrock advisory image assessment.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: Frontend presigned POST -> S3 (private) -> backend GetObject -> Bedrock Converse
+    must:
+      - Bucket stays fully private; no public access, no bucket policy granting public reads
+      - Objects are confined under the reports/ prefix; backend enforces per-report key ownership
+      - Resources are ephemeral dev data and must be deleted after the hackathon
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev]
+    Description: Deployment environment tag.
+
+Resources:
+  EvidenceBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: private store for community-submitted flood report photos awaiting Bedrock assessment
+        must:
+          - Fully private (all public access blocked); encrypted at rest
+          - Short lifecycle expiry; this is ephemeral evidence, not long-term storage
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [POST, PUT]
+            AllowedOrigins:
+              - https://d348efecbg3b7i.cloudfront.net
+              - http://localhost:5173
+              - http://127.0.0.1:5173
+            AllowedHeaders: ['*']
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireEvidenceAfter7Days
+            Status: Enabled
+            ExpirationInDays: 7
+            Prefix: reports/
+      Tags:
+        - Key: Project
+          Value: HydroSense
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  EvidenceBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref EvidenceBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt EvidenceBucket.Arn
+              - !Sub '${EvidenceBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+Outputs:
+  EvidenceBucketName:
+    Description: Private S3 bucket name for community-report image evidence.
+    Value: !Ref EvidenceBucket
+  EvidenceBucketArn:
+    Description: Bucket ARN for least-privilege runtime IAM.
+    Value: !GetAtt EvidenceBucket.Arn

@@ -5,7 +5,12 @@ from app.api.routes import router
 from app.config import Settings, get_settings
 from app.repositories import DynamoDbRepository, JsonFileRepository, StorageRepository
 from app.schemas import HealthResponse, ReadinessResponse
-from app.services import UnderpassRiskService, WaterReadingService
+from app.services import (
+    BedrockAssessmentService,
+    EvidenceStorageService,
+    UnderpassRiskService,
+    WaterReadingService,
+)
 
 
 def create_repository(settings: Settings) -> StorageRepository:
@@ -24,6 +29,8 @@ def create_app(
     repository: StorageRepository | None = None,
     underpass_service: UnderpassRiskService | None = None,
     settings: Settings | None = None,
+    evidence_service: EvidenceStorageService | None = None,
+    assessment_service: BedrockAssessmentService | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     application = FastAPI(
@@ -48,6 +55,8 @@ def create_app(
         underpass_service
         or UnderpassRiskService(settings, data_dir=settings.underpass_data_dir)
     )
+    application.state.evidence_service = evidence_service or EvidenceStorageService(settings)
+    application.state.assessment_service = assessment_service or BedrockAssessmentService(settings)
     application.include_router(router)
 
     @application.get("/health", response_model=HealthResponse, tags=["system"])

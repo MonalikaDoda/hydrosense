@@ -31,6 +31,8 @@ import {
 } from "lucide-react";
 
 import {
+  assessReportImage,
+  createImageUploadUrl,
   createReading,
   getCommunityReports,
   getDashboardSummary,
@@ -41,6 +43,7 @@ import {
   getUnderpassRisk,
   submitCommunityReport,
   updateIncidentStatus,
+  uploadEvidenceImage,
 } from "./api/client";
 import {
   authConfigured,
@@ -134,6 +137,9 @@ export default function App() {
   const [reportStatus, setReportStatus] = useState<CommunityReportStatus>("flooded");
   const [reportNotes, setReportNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [imagePickerError, setImagePickerError] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
   // Real-time IST clock
@@ -376,6 +382,64 @@ export default function App() {
     }
   }
 
+  const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
+  const MAX_IMAGE_BYTES = 5_000_000;
+
+  function handleImageFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    setImagePickerError(null);
+    if (!file) {
+      setSelectedImageFile(null);
+      setImagePreviewUrl(null);
+      return;
+    }
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type as (typeof ALLOWED_IMAGE_TYPES)[number])) {
+      setImagePickerError("Only JPEG, PNG, or WebP photos are accepted.");
+      setSelectedImageFile(null);
+      setImagePreviewUrl(null);
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setImagePickerError(`Photo must be ${Math.round(MAX_IMAGE_BYTES / 1_000_000)} MB or smaller.`);
+      setSelectedImageFile(null);
+      setImagePreviewUrl(null);
+      return;
+    }
+    setSelectedImageFile(file);
+    setImagePreviewUrl(URL.createObjectURL(file));
+  }
+
+  async function runImageAssessmentPipeline(reportId: string, file: File) {
+    setCommunityReports((curr) =>
+      curr.map((item) =>
+        item.report_id === reportId ? { ...item, assessment_status: "pending" } : item,
+      ),
+    );
+    try {
+      const uploadTarget = await createImageUploadUrl(
+        reportId,
+        file.type as "image/jpeg" | "image/png" | "image/webp",
+      );
+      await uploadEvidenceImage(uploadTarget.upload_url, uploadTarget.fields, file);
+      const assessed = await assessReportImage(reportId, uploadTarget.image_key);
+      setCommunityReports((curr) =>
+        curr.map((item) => (item.report_id === reportId ? assessed : item)),
+      );
+    } catch (err) {
+      setCommunityReports((curr) =>
+        curr.map((item) =>
+          item.report_id === reportId
+            ? {
+                ...item,
+                assessment_status: "failed",
+                ai_assessment: { error: err instanceof Error ? err.message : "Image assessment failed." },
+              }
+            : item,
+        ),
+      );
+    }
+  }
+
   async function handleReportSubmit(e: React.FormEvent) {
     e.preventDefault();
     const targetHotspotId = modalHotspotId || selectedHotspotId;
@@ -397,9 +461,16 @@ export default function App() {
         notes: reportNotes.trim() || undefined,
       });
       setCommunityReports((curr) => [created, ...curr]);
+      const imageFile = selectedImageFile;
       setShowModal(false);
       setReportNotes("");
       setReportRequestId(crypto.randomUUID());
+      setSelectedImageFile(null);
+      setImagePreviewUrl(null);
+      setImagePickerError(null);
+      if (imageFile) {
+        await runImageAssessmentPipeline(created.report_id, imageFile);
+      }
       setReloadKey((v) => v + 1);
     } catch (err) {
       setCommunityReports([]);
@@ -595,7 +666,7 @@ export default function App() {
 
         <article className={`stat-tile ${isDepthHazard ? "danger" : "safe"}`}>
           <div className="stat-tile-top">
-            <span className="stat-tile-label">Simulated Ultrasonic Depth</span>
+            <span className="stat-tile-label">Alert Threshold Reading</span>
             <Waves size={16} style={{ color: isDepthHazard ? "var(--terracotta)" : "var(--emerald)" }} />
           </div>
           <div className="stat-tile-value">{hasCurrentDepth ? `${currentDepth.toFixed(1)} cm` : "--"}</div>
@@ -637,12 +708,12 @@ export default function App() {
                 <strong>{riskData ? `${riskData.hotspots.length} LOCATIONS` : "NOT INSTALLED"}</strong>
               </div>
               <div className="quick-stat-row">
-                <span>TELEMETRY SOURCE</span>
-                <strong>SIMULATOR</strong>
+                <span>COMMUNITY REPORTS</span>
+                <strong>{activeCommunityReports.length} ACTIVE</strong>
               </div>
               <div className="quick-stat-row">
-                <span>IMAGE ANALYSIS</span>
-                <strong>NOT CONNECTED</strong>
+                <span>IMAGE ASSESSMENT</span>
+                <strong>NOVA LITE</strong>
               </div>
             </div>
           </div>
@@ -664,12 +735,13 @@ export default function App() {
                 <div className="launchpad-info">
                   <h3>Underpass risk</h3>
                   <p>
-                    Interactive mapping and Open-Meteo forecast comparison becomes available when the versioned underpass threshold dataset is installed.
+                    Live forecast-driven flood risk for reviewed Delhi underpasses, compared against each
+                    location's own rainfall history.
                   </p>
                 </div>
               </div>
               <div className="launchpad-card-footer">
-                <span className="launchpad-meta">OPTIONAL DATASET · OPEN-METEO</span>
+                <span className="launchpad-meta">{riskData ? `${riskData.hotspots.length} LOCATIONS · OPEN-METEO` : "DATASET NOT INSTALLED"}</span>
                 <span className="launchpad-cta">
                   Open map and thresholds <ArrowRight size={14} />
                 </span>
@@ -684,12 +756,12 @@ export default function App() {
                 <div className="launchpad-info">
                   <h3>Monitoring and incidents</h3>
                   <p>
-                    Simulated depth telemetry, a 24.0 cm hazard threshold, and incident lifecycle response. Physical sensor validation remains pending.
+                    Track incident status and test the 24.0 cm alert threshold pipeline in real time.
                   </p>
                 </div>
               </div>
               <div className="launchpad-card-footer">
-                <span className="launchpad-meta">SIMULATOR · 30.0 CM TEST VESSEL</span>
+                <span className="launchpad-meta">24.0 CM ALERT THRESHOLD</span>
                 <span className="launchpad-cta">
                   Open monitoring desk <ArrowRight size={14} />
                 </span>
@@ -704,7 +776,7 @@ export default function App() {
                 <div className="launchpad-info">
                   <h3>Historical evidence</h3>
                   <p>
-                    Inspect historical event evidence and evaluation metrics when a reviewed, versioned underpass dataset is installed.
+                    Inspect reviewed historical flood events and leave-one-storm-out evaluation metrics.
                   </p>
                 </div>
               </div>
@@ -739,12 +811,12 @@ export default function App() {
                 <div className="launchpad-info">
                   <h3>Field reports</h3>
                   <p>
-                    Submit clearly labelled, unverified observations with validated coordinates. Photo upload and automated image analysis are not connected.
+                    Submit a labelled ground observation with an optional photo reviewed by an advisory AI model.
                   </p>
                 </div>
               </div>
               <div className="launchpad-card-footer">
-                <span className="launchpad-meta">HUMAN REVIEW · 45-MINUTE ACTIVE WINDOW</span>
+                <span className="launchpad-meta">HUMAN REVIEW · AI PHOTO REVIEW</span>
                 <span className="launchpad-cta">
                   Submit field observation <ArrowRight size={14} />
                 </span>
@@ -808,13 +880,13 @@ export default function App() {
               <div className="preview-panel-head">
                 <h3>
                   <Cpu size={18} style={{ color: "var(--sky)" }} />
-                  Simulated Sensor Container Status
+                  Alert Threshold Monitor
                 </h3>
                 <button
                   className="filter-pill active"
                   onClick={() => openDashboard("infrastructure")}
                 >
-                  Hardware Desk →
+                  Monitoring Desk →
                 </button>
               </div>
 
@@ -832,7 +904,7 @@ export default function App() {
 
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "10px" }}>
                   <div className="chamber-metric">
-                    <small>SIMULATED LEVEL</small>
+                    <small>TEST READING</small>
                     <strong style={{ color: isDepthHazard ? "var(--terracotta)" : "var(--emerald)" }}>
                       {hasCurrentDepth ? `${currentDepth.toFixed(1)} cm / 30.0 cm` : "No reading"}
                     </strong>
@@ -840,7 +912,7 @@ export default function App() {
                   <div className="chamber-metric">
                     <small>STATUS</small>
                     <strong style={{ fontSize: "14px", color: isDepthHazard ? "var(--terracotta)" : "var(--emerald)" }}>
-                      {!hasCurrentDepth ? "NO READING" : isDepthHazard ? "HIGH WATER THRESHOLD BREACH" : "BELOW DEMO THRESHOLD"}
+                      {!hasCurrentDepth ? "NO READING" : isDepthHazard ? "HIGH WATER THRESHOLD BREACH" : "BELOW THRESHOLD"}
                     </strong>
                   </div>
 
@@ -943,8 +1015,13 @@ export default function App() {
                   );
                 })}
               </MapContainer> : (
-                <div className="empty-state" role="status">
-                  Underpass map unavailable until a reviewed hotspot dataset is installed.
+                <div className="empty-state map-unavailable" role="status">
+                  <MapPin size={28} aria-hidden="true" />
+                  <strong>Hotspot grid unavailable</strong>
+                  <span>
+                    Install reviewed hotspots, thresholds, metrics, and event records to activate map markers.
+                  </span>
+                  <code>UNDERPASS_DATA_DIR</code>
                 </div>
               )}
             </div>
@@ -1077,6 +1154,24 @@ export default function App() {
                           </div>
                         )}
 
+                        {rep.assessment_status !== "not_requested" && (
+                          <div className={`image-assessment-block ${rep.assessment_status}`}>
+                            {rep.assessment_status === "pending" && (
+                              <span className="assessment-badge pending">Photo assessment pending&hellip;</span>
+                            )}
+                            {rep.assessment_status === "failed" && (
+                              <span className="assessment-badge failed">Photo assessment failed</span>
+                            )}
+                            {rep.assessment_status === "completed" && rep.ai_assessment && "summary" in rep.ai_assessment && (
+                              <>
+                                <span className="assessment-badge completed">Advisory photo read</span>
+                                <p className="assessment-summary">{rep.ai_assessment.summary}</p>
+                                <p className="assessment-disclaimer">{rep.ai_assessment.disclaimer}</p>
+                              </>
+                            )}
+                          </div>
+                        )}
+
                       </div>
                     ))
                 )}
@@ -1093,15 +1188,15 @@ export default function App() {
       )}
 
       {/* =====================================================================
-          VIEW 2: SIMULATED TELEMETRY DESK
+          VIEW 2: MONITORING & INCIDENT TESTBED
           ===================================================================== */}
       {activeTab === "infrastructure" && (
         <section className="infra-three-col">
-          {/* Hardware Bench Simulation */}
+          {/* Water-Level Scenario Testing */}
           <div className="hardware-chassis">
-            <h3>Simulated Sensor Bench</h3>
+            <h3>Water-Level Scenario Testing</h3>
             <p>
-              Software-only depth scenarios use the future ESP32-compatible ingestion contract. No physical sensor measurement or calibration is represented here.
+              Inject a test reading to exercise the 24.0 cm alert threshold and incident pipeline.
             </p>
 
             <div className="chamber-assembly">
@@ -1117,7 +1212,7 @@ export default function App() {
 
               <div className="chamber-readouts">
                 <div className="chamber-metric">
-                  <small>SIMULATED DEPTH</small>
+                  <small>TEST DEPTH</small>
                   <strong style={{ color: isDepthHazard ? "var(--terracotta)" : "var(--emerald)" }}>
                     {hasCurrentDepth ? `${currentDepth.toFixed(1)} cm` : "--"}
                   </strong>
@@ -1129,14 +1224,14 @@ export default function App() {
                 <div className="chamber-metric">
                   <small>OPERATIONAL STATE</small>
                   <strong style={{ color: isDepthHazard ? "var(--terracotta)" : "var(--emerald)" }}>
-                    {!hasCurrentDepth ? "NO READING" : isDepthHazard ? "HIGH WATER BREACH ALERT" : "BELOW DEMO THRESHOLD"}
+                    {!hasCurrentDepth ? "NO READING" : isDepthHazard ? "HIGH WATER BREACH ALERT" : "BELOW THRESHOLD"}
                   </strong>
                 </div>
               </div>
             </div>
 
             <div className="injection-panel">
-              <label>INJECT SIMULATED SENSOR SCENARIOS:</label>
+              <label>TEST A SCENARIO:</label>
               <div className="injection-grid">
                 <button
                   className="btn-inject"
@@ -1456,7 +1551,9 @@ export default function App() {
               </button>
             </div>
             <p id="report-dialog-description">
-              Submit an unverified current observation for human review. Photo upload is disabled until private evidence storage is implemented.
+              Submit an unverified current observation for human review. An optional photo is
+              stored privately and read by an advisory AI model; it is never treated as a
+              verified depth measurement or safety certification.
             </p>
 
             <form onSubmit={handleReportSubmit}>
@@ -1544,6 +1641,20 @@ export default function App() {
                   value={reportNotes}
                   onChange={(e) => setReportNotes(e.target.value)}
                 />
+              </div>
+
+              <div className="input-block image-picker-row">
+                <label htmlFor="report-image">PHOTO EVIDENCE (OPTIONAL, ADVISORY ONLY):</label>
+                <input
+                  id="report-image"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleImageFileChange}
+                />
+                {imagePickerError && <p className="image-picker-error">{imagePickerError}</p>}
+                {imagePreviewUrl && (
+                  <img src={imagePreviewUrl} alt="Selected evidence preview" className="image-preview-thumb" />
+                )}
               </div>
 
               <div className="modal-actions-row">
