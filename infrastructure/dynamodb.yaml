@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  HydroSense development persistence - two on-demand DynamoDB tables preserve
+  the existing reading and incident repository contracts for the hackathon.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: FastAPI -> repository protocol -> DynamoDB; local JSON remains fallback
+    must:
+      - Table keys must match DynamoDbRepository key usage
+      - Resources are ephemeral dev data and must be deleted after the hackathon
+    ref:
+      - at: docs/aws-integration-plan.md
+        has: deployment gate + direct readback requirements
+        scope: stack
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev]
+    Description: Deployment environment tag.
+  ReadingsTableName:
+    Type: String
+    Default: hydrosense-readings-dev
+    AllowedPattern: '^[a-zA-Z0-9_.-]{3,255}$'
+    Description: Physical name used by the backend readings repository.
+  IncidentsTableName:
+    Type: String
+    Default: hydrosense-incidents-dev
+    AllowedPattern: '^[a-zA-Z0-9_.-]{3,255}$'
+    Description: Physical name used by the backend incidents repository.
+
+Resources:
+  ReadingsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: stores validated ESP32/simulator readings; composite key keeps device history unique
+        must:
+          - HASH=device_id & RANGE=timestamp; adapter depends on both names
+          - Delete with stack after hackathon; no retained participant data
+        mutable: change-with-constraints
+        mutability:
+          KeySchema: must-never-change
+    Properties:
+      TableName: !Ref ReadingsTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: device_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: device_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: HydroSense
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  IncidentsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: stores threshold incidents and lifecycle state; direct UUID lookup is primary access
+        must:
+          - HASH=incident_id; API detail/update paths depend on this key
+          - Delete with stack after hackathon; no retained participant data
+        mutable: change-with-constraints
+        mutability:
+          KeySchema: must-never-change
+    Properties:
+      TableName: !Ref IncidentsTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: incident_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: incident_id
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: HydroSense
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  ReadingsTableName:
+    Description: DynamoDB table name for validated water-level readings.
+    Value: !Ref ReadingsTable
+  ReadingsTableArn:
+    Description: DynamoDB table ARN for least-privilege runtime IAM.
+    Value: !GetAtt ReadingsTable.Arn
+  IncidentsTableName:
+    Description: DynamoDB table name for generated incidents.
+    Value: !Ref IncidentsTable
+  IncidentsTableArn:
+    Description: DynamoDB table ARN for least-privilege runtime IAM.
+    Value: !GetAtt IncidentsTable.Arn

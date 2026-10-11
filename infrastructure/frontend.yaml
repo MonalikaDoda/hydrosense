@@ -1,0 +1,172 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  HydroSense development frontend - serves the React SPA from private S3
+  through CloudFront with HTTPS and origin access control.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: browser -> CloudFront -> private S3; browser -> API Gateway for live data
+    must:
+      - S3 remains private; only this distribution can read objects
+      - SPA fallback serves index.html for unknown client-side routes
+    ref:
+      - at: docs/aws-integration-plan.md
+        has: hosted frontend verification + cleanup order
+        scope: stack
+
+Parameters:
+  ApiOrigin:
+    Type: String
+    Default: https://0795acig2g.execute-api.ap-south-1.amazonaws.com
+    AllowedPattern: '^https://[a-zA-Z0-9.-]+$'
+    Description: Deployed backend origin allowed by the browser content security policy.
+
+Resources:
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: stores immutable Vite build output; private origin instead of public website hosting
+        must:
+          - Keep all public-access blocks enabled
+          - Empty bucket before deleting stack
+        mutable: change-with-constraints
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: HydroSense
+        - Key: Environment
+          Value: dev
+
+  FrontendOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-s3-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FrontendSecurityHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub ${AWS::StackName}-security-headers
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: !Sub >-
+              default-src 'self'; connect-src 'self' ${ApiOrigin}; img-src 'self' data:;
+              style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none';
+              base-uri 'self'; frame-ancestors 'none'
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: strict-origin-when-cross-origin
+            Override: true
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Override: true
+
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: global HTTPS delivery + private-origin enforcement; PriceClass_100 limits dev cost
+        must:
+          - OriginAccessControlId must remain attached to private S3 origin
+          - Keep security response headers and HTTPS redirect enabled
+        mutable: change-with-constraints
+    Properties:
+      DistributionConfig:
+        Comment: HydroSense development frontend
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: FrontendS3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt FrontendOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: FrontendS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          ResponseHeadersPolicyId: !Ref FrontendSecurityHeaders
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+          MinimumProtocolVersion: TLSv1.2_2021
+      Tags:
+        - Key: Project
+          Value: HydroSense
+        - Key: Environment
+          Value: dev
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${FrontendBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+
+Outputs:
+  BucketName:
+    Description: Private S3 bucket receiving the Vite build output.
+    Value: !Ref FrontendBucket
+  DistributionId:
+    Description: CloudFront distribution ID used for cache invalidation.
+    Value: !Ref FrontendDistribution
+  FrontendUrl:
+    Description: Public HTTPS URL for the HydroSense dashboard.
+    Value: !Sub https://${FrontendDistribution.DomainName}

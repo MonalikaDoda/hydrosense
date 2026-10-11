@@ -2,10 +2,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
-from app.config import get_settings
-from app.repositories import JsonFileRepository, StorageRepository
+from app.config import Settings, get_settings
+from app.repositories import DynamoDbRepository, JsonFileRepository, StorageRepository
 from app.schemas import HealthResponse
 from app.services import WaterReadingService
+
+
+def create_repository(settings: Settings) -> StorageRepository:
+    if settings.storage_backend == "dynamodb":
+        return DynamoDbRepository(
+            readings_table_name=settings.dynamodb_readings_table,
+            incidents_table_name=settings.dynamodb_incidents_table,
+            region_name=settings.aws_region,
+        )
+    return JsonFileRepository(settings.storage_path)
 
 def create_app(repository: StorageRepository | None = None) -> FastAPI:
     settings = get_settings()
@@ -23,7 +33,7 @@ def create_app(repository: StorageRepository | None = None) -> FastAPI:
         allow_methods=["GET", "POST", "PATCH"],
         allow_headers=["Content-Type", "Authorization"],
     )
-    application.state.repository = repository or JsonFileRepository(settings.storage_path)
+    application.state.repository = repository or create_repository(settings)
     application.state.reading_service = WaterReadingService(
         application.state.repository, settings
     )

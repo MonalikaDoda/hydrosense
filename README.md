@@ -1,6 +1,6 @@
 # HydroSense
 
-HydroSense is a Delhi-focused decision-support prototype for flood risk, simulated water-loss anomalies, and equity-aware incident prioritization. The current **Sprint 1 vertical slice** processes simulated water-level readings into locally persisted incidents and displays them in the dashboard.
+HydroSense is a Delhi-focused decision-support prototype for flood risk, simulated water-loss anomalies, and equity-aware incident prioritization. The current vertical slice processes simulated water-level readings into persisted incidents and displays them in the dashboard.
 
 Synthetic readings and demo locations must remain clearly labelled. The project does not claim citywide flood prediction, exact underground leak localization, or access to live municipal sensor data.
 
@@ -8,12 +8,14 @@ Synthetic readings and demo locations must remain clearly labelled. The project 
 
 - FastAPI reading ingestion, latest readings, incident list/detail, status updates, and dashboard summary
 - Configurable 24 cm default threshold and five-minute duplicate suppression
-- JSON-file local persistence behind a replaceable repository interface
+- JSON-file local persistence and verified DynamoDB persistence behind a replaceable repository interface
+- FastAPI deployed to AWS Lambda behind API Gateway HTTP API
+- Least-privilege Lambda role and seven-day CloudWatch log retention
 - ESP32-compatible Python simulator
 - Responsive React dashboard with live API data and loading, failure, and empty states
 - Strict Pydantic v2 and matching TypeScript contracts
 
-AWS, flood scoring, and leak anomaly processing are not implemented yet.
+AWS IoT, SNS alerts, hosted frontend, flood scoring, and leak anomaly processing are not implemented yet.
 
 ## Prerequisites
 
@@ -63,6 +65,57 @@ npm run build
 ```
 
 Configuration placeholders are documented in `.env.example`. Copy values into a local `.env`; never commit secrets, certificates, private keys, or real phone numbers.
+
+## Deploy the AWS backend
+
+The deployed stacks use `ap-south-1`, the `hydrosense-dev` SSO profile, and the templates under `infrastructure/`. AWS SAM CLI and Docker are required for the backend package.
+
+```powershell
+aws cloudformation deploy `
+	--template-file infrastructure\dynamodb.yaml `
+	--stack-name hydrosense-data-dev `
+	--region ap-south-1 `
+	--profile hydrosense-dev
+
+sam build --use-container --template-file infrastructure\backend.yaml
+sam deploy `
+	--stack-name hydrosense-api-dev `
+	--resolve-s3 `
+	--capabilities CAPABILITY_IAM `
+	--region ap-south-1 `
+	--profile hydrosense-dev `
+	--parameter-overrides FrontendOrigin=http://localhost:5173
+```
+
+Retrieve the current API URL without hardcoding it:
+
+```powershell
+aws cloudformation describe-stacks `
+	--stack-name hydrosense-api-dev `
+	--region ap-south-1 `
+	--profile hydrosense-dev `
+	--query "Stacks[0].Outputs[?OutputKey=='ApiUrl'].OutputValue" `
+	--output text
+```
+
+Deploy and publish the frontend after the backend URL is available:
+
+```powershell
+aws cloudformation deploy `
+	--template-file infrastructure\frontend.yaml `
+	--stack-name hydrosense-frontend-dev `
+	--region ap-south-1 `
+	--profile hydrosense-dev `
+	--parameter-overrides ApiOrigin=https://0795acig2g.execute-api.ap-south-1.amazonaws.com
+
+$env:VITE_API_BASE_URL="https://0795acig2g.execute-api.ap-south-1.amazonaws.com"
+npm --prefix frontend run build
+
+$bucket = aws cloudformation describe-stacks --stack-name hydrosense-frontend-dev --region ap-south-1 --profile hydrosense-dev --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text
+$distribution = aws cloudformation describe-stacks --stack-name hydrosense-frontend-dev --region ap-south-1 --profile hydrosense-dev --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text
+aws s3 sync frontend\dist "s3://$bucket" --delete --region ap-south-1 --profile hydrosense-dev
+aws cloudfront create-invalidation --distribution-id $distribution --paths "/*" --profile hydrosense-dev
+```
 
 ## Documentation
 

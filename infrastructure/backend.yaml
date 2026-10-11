@@ -1,0 +1,190 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  HydroSense development API - runs the existing FastAPI contracts on an
+  on-demand Lambda behind a low-cost HTTP API.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    arch: API Gateway HTTP API -> Lambda/Mangum -> existing FastAPI -> DynamoDB
+    must:
+      - Runtime role can access only the two HydroSense dev tables and its log group
+      - Endpoint is public for hackathon demo; throttling and access logs stay enabled
+    ref:
+      - at: docs/aws-integration-plan.md
+        has: verified persistence + runtime IAM boundary
+        scope: stack
+
+Parameters:
+  FrontendOrigin:
+    Type: String
+    Default: http://localhost:5173
+    Description: Browser origin allowed by API Gateway and FastAPI CORS.
+  ReadingsTableName:
+    Type: String
+    Default: hydrosense-readings-dev
+    AllowedPattern: '^[a-zA-Z0-9_.-]{3,255}$'
+    Description: Existing DynamoDB readings table.
+  IncidentsTableName:
+    Type: String
+    Default: hydrosense-incidents-dev
+    AllowedPattern: '^[a-zA-Z0-9_.-]{3,255}$'
+    Description: Existing DynamoDB incidents table.
+
+Resources:
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RetentionInDays: 7
+      Tags:
+        - Key: Project
+          Value: HydroSense
+        - Key: Environment
+          Value: dev
+
+  ApiFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-api
+      RetentionInDays: 7
+      Tags:
+        - Key: Project
+          Value: HydroSense
+        - Key: Environment
+          Value: dev
+
+  ApiFunctionRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: dedicated runtime identity; avoids developer/admin credentials in hosted code
+        must:
+          - No table create/delete permissions
+          - DynamoDB resources remain limited to the two configured table ARNs
+        mutable: change-with-constraints
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: HydroSenseTableAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ReadingsTableName}
+                  - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${IncidentsTableName}
+        - PolicyName: FunctionLogDelivery
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-api:*
+      Tags:
+        - Key: Project
+          Value: HydroSense
+        - Key: Environment
+          Value: dev
+
+  HydroSenseHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: cheaper/lower-latency front door than REST API; demo needs no API keys, VTL, cache, or WAF
+        must:
+          - Keep route throttling while endpoint is unauthenticated
+          - Replace local FrontendOrigin before hosted frontend release
+        mutable: change-with-constraints
+    Properties:
+      StageName: $default
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","responseLength":"$context.responseLength","integrationError":"$context.integrationErrorMessage"}'
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref FrontendOrigin
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+        AllowMethods:
+          - GET
+          - POST
+          - PATCH
+          - OPTIONS
+        MaxAge: 300
+      Tags:
+        Project: HydroSense
+        Environment: dev
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: ApiFunctionLogGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: preserves FastAPI via Mangum; on-demand fits low/intermittent hackathon traffic
+        must:
+          - STORAGE_BACKEND=dynamodb in AWS
+          - Handler remains app.lambda_handler.handler
+        mutable: change-with-constraints
+        mutability:
+          Role: review-required
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-api
+      CodeUri: ../backend/
+      Handler: app.lambda_handler.handler
+      Runtime: python3.12
+      Architectures:
+        - x86_64
+      MemorySize: 512
+      Timeout: 10
+      Role: !GetAtt ApiFunctionRole.Arn
+      Environment:
+        Variables:
+          STORAGE_BACKEND: dynamodb
+          DYNAMODB_READINGS_TABLE: !Ref ReadingsTableName
+          DYNAMODB_INCIDENTS_TABLE: !Ref IncidentsTableName
+          FRONTEND_ORIGIN: !Ref FrontendOrigin
+      Events:
+        ProxyRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HydroSenseHttpApi
+            Path: /{proxy+}
+            Method: ANY
+      Tags:
+        Project: HydroSense
+        Environment: dev
+
+Outputs:
+  ApiUrl:
+    Description: Public HTTP API base URL for the HydroSense backend.
+    Value: !Sub https://${HydroSenseHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  FunctionName:
+    Description: Lambda function name for logs and operational checks.
+    Value: !Ref ApiFunction
+  ExecutionRoleArn:
+    Description: Least-privilege Lambda execution role ARN.
+    Value: !GetAtt ApiFunctionRole.Arn

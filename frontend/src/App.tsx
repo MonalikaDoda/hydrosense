@@ -131,7 +131,7 @@ export default function App() {
             <article className="summary-card"><span><AlertTriangle size={18} /> Open incidents</span><strong>{summary?.open_incidents ?? 0}</strong><small>Awaiting operator action</small></article>
             <article className="summary-card"><span><Gauge size={18} /> High priority</span><strong>{summary?.high_priority_incidents ?? 0}</strong><small>Prototype threshold based</small></article>
             <article className="summary-card"><span><Waves size={18} /> Latest depth</span><strong>{readings[0] ? `${readings[0].water_depth_cm.toFixed(1)} cm` : "--"}</strong><small>Alert threshold · 24.0 cm</small></article>
-            <article className="summary-card"><span><Clock3 size={18} /> Last signal</span><strong className="time-value">{readings[0] ? formatTime(readings[0].timestamp) : "No signal"}</strong><small>Local API storage</small></article>
+            <article className="summary-card"><span><Clock3 size={18} /> Last signal</span><strong className="time-value">{readings[0] ? formatTime(readings[0].timestamp) : "No signal"}</strong><small>AWS cloud persistence</small></article>
           </section>
 
           <section className="workspace-grid">

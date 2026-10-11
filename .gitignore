@@ -19,6 +19,7 @@ venv/
 node_modules/
 dist/
 .vite/
+/.aws-sam/
 *.tsbuildinfo
 
 # Editors and operating systems
