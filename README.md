@@ -6,7 +6,7 @@
 
 - **Live application:** [https://d348efecbg3b7i.cloudfront.net/](https://d348efecbg3b7i.cloudfront.net/)
 - **GitHub repository:** [https://github.com/mukulpythondev/hydrosense](https://github.com/mukulpythondev/hydrosense)
-- **YouTube demonstration:** [https://youtu.be/Pu9GKFUq06w](https://youtu.be/Pu9GKFUq06w)
+- **YouTube demonstration:** [https://youtu.be/fAbQ15Nhqpw](https://youtu.be/fAbQ15Nhqpw)
 - **AWS Builder blog post:** [https://builder.aws.com/content/3KYOzFPGl5ju2toCMaktLoaw7MY/hydrosense](https://builder.aws.com/content/3KYOzFPGl5ju2toCMaktLoaw7MY/hydrosense)
 
 ## Problem statement
