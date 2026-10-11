@@ -11,8 +11,13 @@ import type {
   UnderpassHotspot,
   UnderpassRiskResponse,
 } from "../types/api";
+import { authConfigured, getAccessToken } from "../auth";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+if (!configuredApiBaseUrl && import.meta.env.PROD) {
+  throw new Error("VITE_API_BASE_URL is required for production builds");
+}
+const apiBaseUrl = configuredApiBaseUrl ?? "http://127.0.0.1:8000";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, init);
@@ -33,6 +38,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function mutationRequest<T>(path: string, init: RequestInit): Promise<T> {
+  const accessToken = await getAccessToken();
+  if (authConfigured && !accessToken) {
+    throw new Error("Sign in is required for this action.");
+  }
+  const headers = new Headers(init.headers);
+  if (accessToken) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
+  }
+  return request<T>(path, { ...init, headers });
+}
+
 export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
   return request<HealthResponse>("/health", { signal });
 }
@@ -46,7 +63,7 @@ export async function getLatestReadings(signal?: AbortSignal): Promise<SensorRea
 }
 
 export async function createReading(reading: SensorReading): Promise<SensorReading> {
-  return request<SensorReading>("/api/v1/readings", {
+  return mutationRequest<SensorReading>("/api/v1/readings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(reading),
@@ -61,7 +78,7 @@ export async function updateIncidentStatus(
   incidentId: string,
   status: IncidentStatus,
 ): Promise<Incident> {
-  return request<Incident>(`/api/v1/incidents/${incidentId}`, {
+  return mutationRequest<Incident>(`/api/v1/incidents/${incidentId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status }),
@@ -109,7 +126,7 @@ export async function getCommunityReports(
 export async function submitCommunityReport(
   payload: CommunityReportCreate,
 ): Promise<CommunityReport> {
-  return request<CommunityReport>("/api/v1/underpass/reports", {
+  return mutationRequest<CommunityReport>("/api/v1/underpass/reports", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

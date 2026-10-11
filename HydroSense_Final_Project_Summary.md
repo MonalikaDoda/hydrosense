@@ -76,8 +76,10 @@ readings could generate an incident.
 
 Users can submit one of: - Flooded - Passable - Not flooded
 
-A report should include at least: - Hotspot identifier - Report status -
-Timestamp - Optional image - A stable report identifier
+A report currently includes: - Hotspot identifier - Coordinates - Report
+status - Timestamp - Optional notes - A stable client-generated UUID.
+Image upload is a future server-mediated workflow and is not accepted by
+the current request contract.
 
 The interface should show report freshness and conflicts. A report is an
 observation submitted by a user, not necessarily a verified fact.
@@ -86,9 +88,9 @@ If reports are intended to remain active for approximately 45 minutes: -
 The API must filter expired reports by timestamp immediately. - DynamoDB
 TTL may be used for eventual cleanup, but TTL deletion is asynchronous
 and must not be relied on for exact 45-minute expiry. - Add rate
-limiting and appropriate input validation. - If identity/authentication
-is not implemented, state that reports are unverified and potentially
-vulnerable to abuse.
+limiting and appropriate input validation. - The current templates
+require Cognito JWT authentication for report creation, but reports
+remain user observations rather than independently verified facts.
 
 #### A3. Historical storm replay and evaluation
 
@@ -199,60 +201,40 @@ unrepresentative angle.
 
 ## 5. Dataset and Existing Evaluation
 
-The underpass project context reports: - 46 historical records: 37 flood
-records and 9 "stayed clear" records. - 15 storm days spanning
-2020--2026. - 16 underpass hotspots. - Each historical incident row has
-a news/source link. - Data files include `data/events.csv` and
-`SOURCES.md`. - Hourly rainfall was downloaded from Open-Meteo for each
-hotspot/date. - The default ECMWF IFS model was retained to match the
-live forecast source. - For hotspots with fewer than three recorded
-floods, a shared threshold is used and the location should be labelled
-"limited evidence".
+No reviewed underpass dataset is present in this repository. The API
+therefore returns HTTP 503 for dataset-dependent hotspot, risk, event,
+and metric routes, while the dashboard presents an unavailable state.
 
-Reported hold-one-storm-day-out results supplied by the project team: -
-27 of 37 recorded floods detected. - 10 of 37 recorded floods missed. -
-6 of 9 recorded clear cases incorrectly warned.
-
-Derived descriptive metrics: - Flood detection rate/recall on the
-recorded flood rows: 27/37 = 73.0%. - Miss rate on the recorded flood
-rows: 10/37 = 27.0%. - False-warning rate on recorded clear rows: 6/9 =
-66.7%.
-
-These are the team's reported results and have not been independently
-revalidated in this document. The dataset is small, the clear subset
-contains only nine records, and hourly rainfall may be too coarse to
-distinguish conditions between underpasses during the same storm. These
-results should not be presented as evidence of reliable citywide
-prediction.
+Earlier project context mentioned 46 historical records (37 flood and 9
+clear), 15 storm days, 16 hotspots, and results such as 27/37 detections
+and 6/9 false warnings. The referenced source files and reproducible
+evaluation inputs are absent, so none of those counts or derived rates
+can be verified from the current repository. They must not be presented
+as current results. Metrics may be shown only after a reviewed,
+attributable dataset is installed and the evaluation is rerun.
 
 ## 6. Intended Architecture
 
 ``` text
-React / Vite dashboard
+CloudFront -> private S3 -> React / Vite dashboard
+                  |
+                  +-> Cognito managed login (mutations)
+                  |
+                  v
+              API Gateway HTTP API
+              public GET / JWT POST+PATCH
+                  |
+                  v
+              Lambda -> FastAPI / Mangum
+                  |
+        +---------------+----------------+
+        |                                |
+    DynamoDB repository               Underpass module
+    readings/incidents/reports         reviewed data + Open-Meteo
         |
-        v
-FastAPI backend
-  |          |             |
-  |          |             +--> Vision assessment via Amazon Bedrock (planned)
-  |          |
-  |          +--> Underpass risk module
-  |               - forecast + historical thresholds
-  |               - risk explanation
-  |               - historical replay/evaluation
-  |
-  +--> Water monitoring APIs
-       - ESP32 readings or simulator
-       - simulated leak readings
-       - incident creation
-        |
-        v
-Persistence adapter
-  |                     |
-  +--> Local JSON       +--> Amazon DynamoDB (planned cloud adapter)
-                              |
-                              +--> readings
-                              +--> incidents
-                              +--> community reports / AI assessment metadata
+    Local JSON alternative
+
+Future only: private S3 evidence -> analyzer Lambda -> Amazon Bedrock
 ```
 
 ### Integration recommendation
@@ -270,19 +252,22 @@ Keep the data source explicit in the API/UI, for example: -
 
 ## 7. AWS Services and Their Roles
 
-The following is the recommended target architecture. Mark each service
-as deployed only after it is actually configured and tested.
+The table reflects the current architecture. The hosted S3/CloudFront,
+API Gateway/Lambda, two-table DynamoDB, and CloudWatch path was verified
+before the present hardening work. Cognito and the reports table exist
+only in the current templates and must not be described as deployed.
 
   -----------------------------------------------------------------------
   AWS service             Intended purpose        Verification required
   ----------------------- ----------------------- -----------------------
-  AWS Amplify Hosting     Host the React/Vite     Open the deployed URL
-                          frontend and provide a  and verify the current
-                          public URL              frontend build
+    Amazon S3 + CloudFront  Host the private React  Open the CloudFront URL
+                                                    build behind OAC        and verify current assets
 
-  AWS App Runner          Run the existing        Check service health
-                          FastAPI backend         and exercise real API
-                                                  endpoints
+    API Gateway + Lambda    Run FastAPI through     Check `/health`, `/ready`,
+                                                    Mangum                   and real API endpoints
+
+    Amazon Cognito         Authenticate operators  Complete code+PKCE login,
+                                                 for mutation routes      TOTP, and token validation
 
   Amazon DynamoDB         Persist readings,       Write a record, read it
                           incidents, community    back, restart/redeploy
@@ -323,39 +308,42 @@ choice. - Set a budget alert, but remember that a budget alert is not a
 hard spending cap. - Keep logs free of unnecessary personal or sensitive
 data. - Validate and rate-limit public report endpoints.
 
-## 8. Current Project State --- Based on the Available Project Context
+## 8. Current Project State
 
-### Reported as existing/working locally
+### Implemented in the current worktree
 
--   React/Vite frontend and FastAPI backend scaffold.
--   Shared API contracts for sensor readings, leak measurements,
-    incidents, and dashboard summary.
--   `/health` endpoint and API documentation.
--   Local JSON persistence and simulator-to-FastAPI-to-dashboard
-    vertical slice.
--   Backend tests were reported passing (the latest stated report was 14
-    passing tests).
--   Frontend type-check and production build were reported passing.
--   Underpass risk service in `backend/risk/`, historical dataset/source
-    references, and risk tests were reported as existing; 7 risk tests
-    were reported passing.
--   A dry October forecast test reportedly showed all 16 hotspots green.
--   A simulated water-level reading crossing a configured threshold
-    reportedly created a high-water incident.
+-   FastAPI contracts, liveness and dependency readiness endpoints.
+-   Local JSON and DynamoDB repositories with bounded reads, idempotent
+    reports, and atomic high-water incident cooldown markers.
+-   A simulator-to-API-to-dashboard path with explicit source labels.
+-   Dataset-gated underpass APIs with live, cached, stale, unavailable,
+    and unknown states that do not invent zero rainfall.
+-   A React/Vite dashboard without mock fallback data or fabricated AI
+    responses.
+-   Cognito code+PKCE managed login and API Gateway JWT authorization
+    for state-changing hosted routes.
+-   CloudFormation/SAM templates for three DynamoDB tables, Lambda,
+    HTTP API, Cognito, private S3, and CloudFront.
 
-These statements are based on project-context reports, not a fresh run
-of the repository in this document.
+### Verified hosted before current changes
 
-### Not confirmed as completed
+-   Public API Gateway/Lambda health and simulator ingestion.
+-   DynamoDB write/read and persistence across backend restart for the
+    readings and incidents tables.
+-   Private S3/CloudFront delivery with OAC and security headers.
+-   CloudWatch Lambda and API access logs.
 
--   AWS persistence and deployment.
--   A verified public production URL.
--   End-to-end DynamoDB read/write and persistence after restart.
--   Physical ESP32-to-cloud connectivity.
--   Live municipal sensor integration.
--   The proposed Amazon Bedrock photo-assessment feature.
--   A labelled photo evaluation set and measured AI performance.
--   Production-grade authentication/moderation for community reports.
+The hosted application remains the earlier two-table, pre-Cognito,
+pre-integration build. Current changes have not been deployed.
+
+### Not completed
+
+-   Deployment and end-to-end verification of the reports table,
+    Cognito login, protected mutations, and current dashboard.
+-   A reviewed underpass dataset and reproducible evaluation.
+-   Physical ESP32-to-cloud connectivity or live municipal sensors.
+-   Amazon Bedrock photo assessment or a labelled image evaluation set.
+-   AWS IoT, SNS alerts, and CloudWatch alarms.
 
 ## 9. Recommended Implementation Order
 
@@ -369,8 +357,8 @@ of the repository in this document.
     display, rate limiting, and server-side expiry filtering.
 5.  Add historical storm replay and an evaluation panel that uses the
     actual evaluation output.
-6.  Deploy the existing application path to AWS: Amplify frontend, App
-    Runner backend, DynamoDB persistence, CloudWatch logs.
+6.  Review change sets, then deploy the existing application path:
+    DynamoDB, API Gateway/Lambda, Cognito, and private S3/CloudFront.
 7.  Verify a real cloud write/read path and persistent storage after
     backend restart.
 8.  Build a small labelled photo dataset and implement the Bedrock
@@ -386,9 +374,10 @@ simulator available as a clearly labelled fallback.
 
 ## 10. Demo Flow
 
-Recommended judge demo: 1. Replay a historical storm and show recorded
-outcomes versus risk estimates. 2. Select an underpass and explain its
-risk window, evidence quality, and "Why this alert?" text. 3. Submit a
+Recommended judge demo: 1. If a reviewed dataset is installed, replay a
+historical storm and show recorded outcomes versus risk estimates;
+otherwise show the explicit unavailable state. 2. Select an underpass
+only when reviewed hotspot data is installed. 3. Submit a
 community report and show how the interface handles fresh, stale, or
 conflicting observations. 4. If the Bedrock feature is implemented,
 upload a test photo and show its structured visual assessment separately
@@ -404,10 +393,12 @@ Good morning, judges.
 HydroSense is a water-risk monitoring and decision-support platform
 focused on helping people understand water-related risks more clearly.
 
-Our Urban Flood Intelligence module estimates risk across 16 Delhi
-underpass hotspots using weather forecasts and historical incidents. It
-displays risk levels, explains why a location is flagged, and supports
-community reports about current road conditions. We are also developing
+Our Urban Flood Intelligence module is designed to estimate risk for
+reviewed Delhi underpass hotspots using weather forecasts and historical
+incidents. The current repository does not include that reviewed
+dataset, so it reports the module as unavailable rather than inventing
+risk. It supports community reports about current road conditions, and
+we are also developing
 an AI visual-assessment feature that examines submitted road photos for
 visible signs of waterlogging and flags cases where visual evidence
 conflicts with the forecast or community reports.
@@ -416,13 +407,15 @@ Our second module demonstrates water infrastructure monitoring through
 an ESP32 ultrasonic water-level prototype and simulated pipeline
 pressure/flow anomaly detection.
 
-The platform uses a shared backend and is designed for AWS-hosted
-delivery and persistent cloud storage. We are careful to distinguish
+The platform uses a shared backend; an earlier vertical slice was
+verified on API Gateway, Lambda, DynamoDB, S3, and CloudFront. Current
+hardening and Cognito changes await deployment. We distinguish
 real observations, user reports, simulated readings, modelled risk, and
 AI assessments.
 
-Our existing flood-risk logic is threshold-based, not a trained ML
-predictor, and our historical evaluation is small. We present HydroSense
+Our flood-risk logic is threshold-based, not a trained ML predictor, and
+no historical evaluation is reproducible from the current repository.
+We present HydroSense
 as a decision-support prototype, not an official warning system. Our
 goal is to combine evidence sources responsibly and help users identify
 where further attention may be needed.

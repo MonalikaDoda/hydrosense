@@ -16,6 +16,10 @@ class InvalidStatusTransition(ValueError):
     pass
 
 
+class InvalidReadingTimestamp(ValueError):
+    pass
+
+
 ALLOWED_TRANSITIONS: dict[IncidentStatus, set[IncidentStatus]] = {
     IncidentStatus.OPEN: {
         IncidentStatus.ASSIGNED,
@@ -42,6 +46,14 @@ class WaterReadingService:
         self.settings = settings
 
     def ingest(self, reading: SensorReading) -> SensorReading:
+        now = datetime.now(UTC)
+        timestamp = reading.timestamp.astimezone(UTC)
+        if timestamp < now - timedelta(seconds=self.settings.max_reading_age_seconds):
+            raise InvalidReadingTimestamp("reading timestamp is too old")
+        if timestamp > now + timedelta(
+            seconds=self.settings.max_reading_future_skew_seconds
+        ):
+            raise InvalidReadingTimestamp("reading timestamp is too far in the future")
         self.repository.add_reading(reading)
         if reading.water_depth_cm >= self.settings.water_alert_threshold_cm:
             self._create_incident_unless_duplicate(reading)
@@ -51,17 +63,6 @@ class WaterReadingService:
         cooldown_start = reading.timestamp - timedelta(
             seconds=self.settings.alert_cooldown_seconds
         )
-        duplicate = any(
-            incident.hazard_type == HazardType.HIGH_WATER_LEVEL
-            and incident.location_id == reading.location_id
-            and incident.status
-            in {IncidentStatus.OPEN, IncidentStatus.ASSIGNED, IncidentStatus.VERIFIED}
-            and cooldown_start <= incident.created_at <= reading.timestamp
-            for incident in self.repository.list_incidents()
-        )
-        if duplicate:
-            return
-
         incident = Incident(
             incident_id=uuid4(),
             hazard_type=HazardType.HIGH_WATER_LEVEL,
@@ -82,7 +83,7 @@ class WaterReadingService:
             created_at=reading.timestamp,
             updated_at=reading.timestamp,
         )
-        self.repository.add_incident(incident)
+        self.repository.add_incident_if_not_recent(incident, cooldown_start)
 
     def _severity(self, depth_cm: float) -> Severity:
         if depth_cm >= self.settings.water_alert_threshold_cm + 10:

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
@@ -60,6 +61,24 @@ def test_threshold_crossing_creates_incident_and_suppresses_duplicate() -> None:
     assert incidents[0]["source"] == "simulated_sensor"
 
 
+def test_ingestion_rejects_stale_and_future_readings() -> None:
+    client = TestClient(create_app(MemoryRepository()))
+    now = datetime.now(UTC)
+
+    stale = client.post(
+        "/api/v1/readings", json=reading_payload(20, now - timedelta(minutes=16))
+    )
+    future = client.post(
+        "/api/v1/readings", json=reading_payload(20, now + timedelta(minutes=11))
+    )
+
+    assert stale.status_code == 422
+    assert stale.json()["detail"] == "reading timestamp is too old"
+    assert future.status_code == 422
+    assert future.json()["detail"] == "reading timestamp is too far in the future"
+    assert client.get("/api/v1/readings/latest").json() == []
+
+
 def test_new_incident_is_allowed_after_cooldown() -> None:
     client = TestClient(create_app(MemoryRepository()))
     timestamp = datetime.now(UTC)
@@ -70,6 +89,20 @@ def test_new_incident_is_allowed_after_cooldown() -> None:
     )
 
     assert len(client.get("/api/v1/incidents").json()) == 2
+
+
+def test_concurrent_threshold_crossings_create_one_incident() -> None:
+    repository = MemoryRepository()
+    service = WaterReadingService(repository, Settings(_env_file=None))
+    timestamp = datetime.now(UTC)
+    readings = [
+        SensorReading.model_validate(reading_payload(25, timestamp)) for _ in range(12)
+    ]
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        list(executor.map(service.ingest, readings))
+
+    assert len(repository.list_incidents()) == 1
 
 
 def test_incident_detail_and_status_transitions() -> None:

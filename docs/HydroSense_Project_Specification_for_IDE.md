@@ -9,6 +9,14 @@
 
 ---
 
+## Current implementation note
+
+This document began as the project plan. The current repository now contains a FastAPI/Lambda backend, local JSON and DynamoDB adapters, a React/Vite dashboard, private S3/CloudFront hosting templates, and undeployed Cognito JWT protection for state-changing hosted routes. The hosted AWS application remains the earlier pre-integration build.
+
+Sprint references to mock JSON or mock API responses are historical scaffolding instructions. Runtime failures must now remain visible as error, empty, unknown, or unavailable states; do not restore synthetic fallback records. The underpass dataset, physical hardware, AWS IoT, SNS, CloudWatch alarms, and Bedrock image analysis remain unavailable or unverified unless separate evidence says otherwise.
+
+---
+
 ## 1. Product Summary
 
 HydroSense is a Delhi-focused, geospatial water-risk and response-prioritization platform. It combines two related but technically different workflows:
@@ -356,7 +364,7 @@ Agreed units are centimetres for distance and water depth, and UTC for timestamp
 
 **Poojya**
 - Create React/Vite app and dashboard shell.
-- Build map and incident list against mock JSON.
+- Build map and incident list against mock JSON during initial scaffolding only; remove runtime fallback data when the API is connected.
 - Agree on frontend API client interface.
 
 **Sprint exit criteria:** each person can run their own component; payload contract is agreed.
@@ -364,7 +372,7 @@ Agreed units are centimetres for distance and water depth, and UTC for timestamp
 ### Sprint 1 — Independent vertical slices (October 10, first work block)
 **Mukul**
 - Implement reading validation, incident model, flood-risk baseline, leak rules and basic storage.
-- Provide mock data and API responses early.
+- Provide mock data and API responses only as test/scaffolding fixtures, never as silent runtime fallbacks.
 - Set up AWS resources needed for the selected path.
 
 **Rasleen**
@@ -379,7 +387,7 @@ Agreed units are centimetres for distance and water depth, and UTC for timestamp
 - Show clear labels for real, simulated and demo-scenario data.
 - Add loading, error and empty states.
 
-**Sprint exit criteria:** backend works with a test payload; the local hardware prototype has ruler-checked readings, changing OLED values/status, stable serial output, a short demonstration and a schema-compatible sample payload; frontend works with mock data. AWS publishing is attempted after local hardware validation, with any blocker documented and the simulator retained as the integration path.
+**Sprint exit criteria (historical):** backend works with a test payload; the local hardware prototype has ruler-checked readings, changing OLED values/status, stable serial output, a short demonstration and a schema-compatible sample payload; frontend scaffolding works with mock data. Once integrated, API failures must not fall back to those fixtures. AWS publishing is attempted after local hardware validation, with any blocker documented and the simulator retained as the integration path.
 
 ### Sprint 2 — Integration (October 10, second work block)
 **Mukul + Rasleen**
@@ -479,7 +487,7 @@ Paste the following into the coding IDE as the implementation brief:
 >
 > First inspect the existing repository and preserve working code. Do not rewrite the project blindly. Read this specification and turn it into small, testable tasks.
 >
-> Implement the project in the listed sprints. Start with a working end-to-end vertical slice and use mock data where external data or hardware is unavailable. Keep the ESP32 payload contract identical to the simulator payload contract.
+> Implement the project in the listed sprints. Start with a working end-to-end vertical slice. Use fixtures in tests or explicitly labelled demo tools where external data or hardware is unavailable, but expose unavailable runtime dependencies honestly and never substitute mock API success. Keep the ESP32 payload contract identical to the simulator payload contract.
 >
 > Implement hardware local-first. Rasleen must first demonstrate an ESP32 + HC-SR04 + OLED prototype that measures sensor-to-water distance, calculates depth from a configurable reference depth, and displays distance, depth in centimetres and `NORMAL`, `CAUTION` or `HIGH`. Treat thresholds as illustrative demo settings, verify readings against known distances, handle invalid readings safely, and use a voltage divider or level shifter on the HC-SR04 Echo line. Attempt Wi-Fi and AWS IoT Core only after this local milestone works.
 >

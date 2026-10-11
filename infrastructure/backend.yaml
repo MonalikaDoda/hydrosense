@@ -11,7 +11,8 @@ Metadata:
     arch: API Gateway HTTP API -> Lambda/Mangum -> existing FastAPI -> DynamoDB
     must:
       - Runtime role can access only the three HydroSense dev tables and its log group
-      - Endpoint is public for hackathon demo; throttling and access logs stay enabled
+      - Read endpoints remain public; POST/PATCH routes require Cognito JWTs
+      - Throttling and access logs stay enabled
     ref:
       - at: docs/aws-integration-plan.md
         has: verified persistence + runtime IAM boundary
@@ -37,6 +38,46 @@ Parameters:
     Default: hydrosense-reports-dev
     AllowedPattern: '^[a-zA-Z0-9_.-]{3,255}$'
     Description: Existing DynamoDB community reports table.
+  DynamoDbMaxScanItems:
+    Type: Number
+    Default: 1000
+    MinValue: 1
+    MaxValue: 10000
+    Description: Hard ceiling for a repository scan before application filtering.
+  MaxReadingAgeSeconds:
+    Type: Number
+    Default: 900
+    MinValue: 0
+    MaxValue: 86400
+    Description: Maximum accepted age for an incoming sensor reading.
+  MaxReadingFutureSkewSeconds:
+    Type: Number
+    Default: 600
+    MinValue: 0
+    MaxValue: 3600
+    Description: Maximum accepted clock skew into the future for a sensor reading.
+  ForecastRequestTimeoutSeconds:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    MaxValue: 5
+    Description: Open-Meteo request timeout, kept below the Lambda timeout.
+  ForecastCacheSeconds:
+    Type: Number
+    Default: 600
+    MinValue: 0
+    MaxValue: 3600
+    Description: Period in which a successful forecast is considered fresh.
+  ForecastStaleCacheSeconds:
+    Type: Number
+    Default: 1800
+    MinValue: 0
+    MaxValue: 86400
+    Description: Maximum stale-forecast fallback window before risk becomes unknown.
+  UnderpassDataDir:
+    Type: String
+    Default: /var/task/data/underpass
+    Description: Lambda-local path containing the reviewed underpass dataset artifacts.
 
 Resources:
   ApiAccessLogGroup:
@@ -92,6 +133,7 @@ Resources:
                   - dynamodb:GetItem
                   - dynamodb:PutItem
                   - dynamodb:Scan
+                  - dynamodb:TransactWriteItems
                   - dynamodb:UpdateItem
                 Resource:
                   - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ReadingsTableName}
@@ -112,6 +154,104 @@ Resources:
         - Key: Environment
           Value: dev
 
+  OperatorUserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: authenticates dashboard operators before state-changing API calls; user pool only because browser never calls AWS services directly
+        must:
+          - Admin-created users only; public self-sign-up would not protect mutation routes
+          - TOTP MFA remains required
+          - Dev deletion policy is not a production retention choice
+        mutable: change-with-constraints
+    Properties:
+      UserPoolName: !Sub ${AWS::StackName}-operators
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+      MfaConfiguration: 'ON'
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 7
+      UserPoolTier: ESSENTIALS
+      UserPoolTags:
+        Project: HydroSense
+        Environment: dev
+
+  OperatorWebClient:
+    Type: AWS::Cognito::UserPoolClient
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: public SPA OAuth client; managed login performs authorization-code + PKCE without a browser secret
+        must:
+          - GenerateSecret=false for browser use
+          - Code flow only; never enable implicit grant
+          - Keep token revocation and refresh rotation enabled
+        mutable: change-with-constraints
+        mutability:
+          GenerateSecret: must-never-change
+    Properties:
+      UserPoolId: !Ref OperatorUserPool
+      ClientName: hydrosense-dashboard
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+      CallbackURLs:
+        - !Ref FrontendOrigin
+      LogoutURLs:
+        - !Ref FrontendOrigin
+      SupportedIdentityProviders:
+        - COGNITO
+      EnableTokenRevocation: true
+      RefreshTokenRotation:
+        Feature: ENABLED
+        RetryGracePeriodSeconds: 30
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 15
+      IdTokenValidity: 15
+      RefreshTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  OperatorLoginDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub hydrosense-${AWS::AccountId}-${AWS::Region}
+      ManagedLoginVersion: 2
+      UserPoolId: !Ref OperatorUserPool
+
+  OperatorLoginBranding:
+    Type: AWS::Cognito::ManagedLoginBranding
+    DependsOn: OperatorLoginDomain
+    Properties:
+      ClientId: !Ref OperatorWebClient
+      UserPoolId: !Ref OperatorUserPool
+      UseCognitoProvidedValues: true
+
   HydroSenseHttpApi:
     Type: AWS::Serverless::HttpApi
     Metadata:
@@ -129,6 +269,14 @@ Resources:
       DefaultRouteSettings:
         ThrottlingBurstLimit: 20
         ThrottlingRateLimit: 10
+      Auth:
+        Authorizers:
+          OperatorJwtAuthorizer:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub https://cognito-idp.${AWS::Region}.${AWS::URLSuffix}/${OperatorUserPool}
+              audience:
+                - !Ref OperatorWebClient
       CorsConfiguration:
         AllowOrigins:
           - !Ref FrontendOrigin
@@ -173,6 +321,13 @@ Resources:
           DYNAMODB_READINGS_TABLE: !Ref ReadingsTableName
           DYNAMODB_INCIDENTS_TABLE: !Ref IncidentsTableName
           DYNAMODB_REPORTS_TABLE: !Ref ReportsTableName
+          DYNAMODB_MAX_SCAN_ITEMS: !Ref DynamoDbMaxScanItems
+          MAX_READING_AGE_SECONDS: !Ref MaxReadingAgeSeconds
+          MAX_READING_FUTURE_SKEW_SECONDS: !Ref MaxReadingFutureSkewSeconds
+          FORECAST_REQUEST_TIMEOUT_SECONDS: !Ref ForecastRequestTimeoutSeconds
+          FORECAST_CACHE_SECONDS: !Ref ForecastCacheSeconds
+          FORECAST_STALE_CACHE_SECONDS: !Ref ForecastStaleCacheSeconds
+          UNDERPASS_DATA_DIR: !Ref UnderpassDataDir
           FRONTEND_ORIGIN: !Ref FrontendOrigin
       Events:
         ProxyRoute:
@@ -181,6 +336,30 @@ Resources:
             ApiId: !Ref HydroSenseHttpApi
             Path: /{proxy+}
             Method: ANY
+        CreateReadingRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HydroSenseHttpApi
+            Path: /api/v1/readings
+            Method: POST
+            Auth:
+              Authorizer: OperatorJwtAuthorizer
+        CreateReportRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HydroSenseHttpApi
+            Path: /api/v1/underpass/reports
+            Method: POST
+            Auth:
+              Authorizer: OperatorJwtAuthorizer
+        UpdateIncidentRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HydroSenseHttpApi
+            Path: /api/v1/incidents/{incident_id}
+            Method: PATCH
+            Auth:
+              Authorizer: OperatorJwtAuthorizer
       Tags:
         Project: HydroSense
         Environment: dev
@@ -189,9 +368,21 @@ Outputs:
   ApiUrl:
     Description: Public HTTP API base URL for the HydroSense backend.
     Value: !Sub https://${HydroSenseHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  ReadinessUrl:
+    Description: Dependency-aware readiness endpoint for deployment verification.
+    Value: !Sub https://${HydroSenseHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/ready
   FunctionName:
     Description: Lambda function name for logs and operational checks.
     Value: !Ref ApiFunction
   ExecutionRoleArn:
     Description: Least-privilege Lambda execution role ARN.
     Value: !GetAtt ApiFunctionRole.Arn
+  CognitoUserPoolId:
+    Description: Cognito user pool ID for the frontend authentication configuration.
+    Value: !Ref OperatorUserPool
+  CognitoUserPoolClientId:
+    Description: No-secret Cognito SPA app client ID.
+    Value: !Ref OperatorWebClient
+  CognitoDomain:
+    Description: Managed login domain used by the frontend OAuth flow.
+    Value: !Sub ${OperatorLoginDomain}.auth.${AWS::Region}.amazoncognito.com

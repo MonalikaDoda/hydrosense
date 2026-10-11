@@ -19,9 +19,12 @@ Metadata:
 Parameters:
   ApiOrigin:
     Type: String
-    Default: https://0795acig2g.execute-api.ap-south-1.amazonaws.com
     AllowedPattern: '^https://[a-zA-Z0-9.-]+$'
-    Description: Deployed backend origin allowed by the browser content security policy.
+    Description: Explicit deployed backend origin allowed by the browser content security policy.
+  CognitoOrigin:
+    Type: String
+    AllowedPattern: '^https://[a-zA-Z0-9.-]+$'
+    Description: Explicit Cognito managed-login origin allowed for OAuth code exchange.
 
 Resources:
   FrontendBucket:
@@ -71,7 +74,8 @@ Resources:
         SecurityHeadersConfig:
           ContentSecurityPolicy:
             ContentSecurityPolicy: !Sub >-
-              default-src 'self'; connect-src 'self' ${ApiOrigin}; img-src 'self' data:;
+              default-src 'self'; connect-src 'self' ${ApiOrigin} ${CognitoOrigin};
+              img-src 'self' data: https://*.tile.openstreetmap.org;
               style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none';
               base-uri 'self'; frame-ancestors 'none'
             Override: true
@@ -150,6 +154,16 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt FrontendBucket.Arn
+              - !Sub ${FrontendBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: false
           - Sid: AllowCloudFrontReadOnly
             Effect: Allow
             Principal:

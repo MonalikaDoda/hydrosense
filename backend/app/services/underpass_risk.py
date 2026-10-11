@@ -7,7 +7,6 @@ import csv
 import json
 import math
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -15,13 +14,13 @@ from pathlib import Path
 from typing import Any
 
 from app.config import Settings
+from app.schemas import UnderpassEvaluationMetrics, UnderpassEventRecord, UnderpassHotspot
 
 IST = timezone(timedelta(hours=5, minutes=30))
 TIERS = [(1.0, "red"), (0.8, "orange"), (0.5, "yellow")]
 DISCLAIMER = "Prototype. Estimated risk, not an official warning."
 LOOKAHEAD_HOURS = 24
 OPEN_METEO_API = "https://api.open-meteo.com/v1/forecast"
-CACHE_SECONDS = 600  # 10 minutes
 
 
 def tier_for(ratio: float) -> str:
@@ -130,13 +129,27 @@ def assess_hotspot(
         }
 
     max1 = max(v1)
-    max3 = max(v3) if v3 else max(v1)
+    max3 = max(v3) if v3 else None
     ratios: list[float] = []
     if _ok(l1):
         ratios.append(max1 / l1)
-    if _ok(l3):
+    if _ok(l3) and max3 is not None:
         ratios.append(max3 / l3)
-    ratio = max(ratios) if ratios else 0.0
+    if not ratios:
+        return {
+            **base,
+            "tier": "unknown",
+            "ratio": None,
+            "forecast": {
+                "max_1h_mm": _round_opt(max1),
+                "max_3h_mm": _round_opt(max3),
+                "window_start": None,
+                "window_end": None,
+            },
+            "history": None,
+            "why": "A matching rainfall threshold is not available for this spot.",
+        }
+    ratio = max(ratios)
     tier = tier_for(ratio)
 
     flagged = [
@@ -147,15 +160,19 @@ def assess_hotspot(
     window_start = flagged[0].isoformat() if flagged else None
     window_end = flagged[-1].isoformat() if flagged else None
 
-    limit_text = f"about {_round_opt(l3)} mm in 3 h" if _ok(l3) else "not known"
-    fc_text = f"up to {_round_opt(max3)} mm in 3 h, heaviest hour {_round_opt(max1)} mm"
+    if _ok(l3) and max3 is not None:
+        limit_text = f"about {_round_opt(l3)} mm in 3 h"
+        fc_text = f"up to {_round_opt(max3)} mm in 3 h, heaviest hour {_round_opt(max1)} mm"
+    else:
+        limit_text = f"about {_round_opt(l1)} mm in 1 h"
+        fc_text = f"heaviest hour up to {_round_opt(max1)} mm"
     history: dict[str, Any] | None = None
     if tier == "green":
         why = f"Forecast rain for next 24 h ({fc_text}) is well below limit ({limit_text})."
     else:
         close = {"yellow": "getting closer to", "orange": "close to", "red": "at or above"}[tier]
         why = f"Forecast rain {fc_text} is {close} this spot's limit ({limit_text})."
-        if flood_rain3h:
+        if flood_rain3h and max3 is not None:
             k = sum(1 for x in flood_rain3h if x >= max3)
             history = {
                 "recorded_floods": len(flood_rain3h),
@@ -198,8 +215,8 @@ class UnderpassRiskService:
         return bool(self.hotspots and self.model and self.metrics and self.events)
 
     def _resolve_data_dir(self, explicit: Path | None) -> Path:
-        if explicit and explicit.exists():
-            return explicit
+        if explicit is not None:
+            return explicit.resolve()
         candidates = [
             Path("data/underpass"),
             Path("backend/data/underpass"),
@@ -214,20 +231,48 @@ class UnderpassRiskService:
 
     def _load_datasets(self) -> None:
         d = self.data_dir
-        if (d / "hotspots.json").exists():
-            self.hotspots = json.loads((d / "hotspots.json").read_text(encoding="utf-8"))["hotspots"]
-        if (d / "thresholds.json").exists():
+        required = ["hotspots.json", "thresholds.json", "metrics.json", "events.csv"]
+        if any(not (d / name).is_file() for name in required):
+            return
+
+        try:
+            hotspot_payload = json.loads((d / "hotspots.json").read_text(encoding="utf-8"))
+            self.hotspots = [
+                UnderpassHotspot.model_validate(item).model_dump()
+                for item in hotspot_payload["hotspots"]
+            ]
             self.model = json.loads((d / "thresholds.json").read_text(encoding="utf-8"))
-        if (d / "metrics.json").exists():
-            self.metrics = json.loads((d / "metrics.json").read_text(encoding="utf-8"))
-        if (d / "features.csv").exists():
-            with open(d / "features.csv", encoding="utf-8") as f:
-                for r in csv.DictReader(f):
-                    if r.get("outcome") == "flooded":
-                        self.floods.setdefault(r["hotspot_id"], []).append(float(r["rain3h_mm"]))
-        if (d / "events.csv").exists():
-            with open(d / "events.csv", encoding="utf-8") as f:
-                self.events = list(csv.DictReader(f))
+            if not isinstance(self.model.get("pooled"), dict) or not isinstance(
+                self.model.get("hotspots", {}), dict
+            ):
+                raise ValueError("Thresholds must contain pooled and hotspots objects.")
+            self.metrics = UnderpassEvaluationMetrics.model_validate_json(
+                (d / "metrics.json").read_text(encoding="utf-8")
+            ).model_dump()
+            with (d / "events.csv").open(encoding="utf-8") as file:
+                self.events = [
+                    UnderpassEventRecord.model_validate(row).model_dump()
+                    for row in csv.DictReader(file)
+                ]
+            if not self.events:
+                raise ValueError("At least one reviewed event is required.")
+
+            if (d / "features.csv").exists():
+                try:
+                    with (d / "features.csv").open(encoding="utf-8") as file:
+                        for row in csv.DictReader(file):
+                            if row.get("outcome") == "flooded":
+                                self.floods.setdefault(row["hotspot_id"], []).append(
+                                    float(row["rain3h_mm"])
+                                )
+                except (KeyError, OSError, TypeError, ValueError):
+                    self.floods = {}
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+            self.hotspots = []
+            self.model = {}
+            self.floods = {}
+            self.metrics = {}
+            self.events = []
 
     def get_hotspots(self) -> list[dict[str, Any]]:
         return self.hotspots
@@ -264,65 +309,119 @@ class UnderpassRiskService:
         wanted = getattr(self.settings, "forecast_model", "ecmwf_ifs")
         try:
             url = f"{OPEN_METEO_API}?{urllib.parse.urlencode({**params, 'models': wanted}, safe=',')}"
-            with urllib.request.urlopen(url, timeout=6) as resp:
+            with urllib.request.urlopen(
+                url, timeout=self.settings.forecast_request_timeout_seconds
+            ) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             return (data if isinstance(data, list) else [data]), wanted
         except Exception:
             # fallback to default model or empty
             try:
                 url = f"{OPEN_METEO_API}?{urllib.parse.urlencode(params, safe=',')}"
-                with urllib.request.urlopen(url, timeout=6) as resp:
+                with urllib.request.urlopen(
+                    url, timeout=self.settings.forecast_request_timeout_seconds
+                ) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                 return (data if isinstance(data, list) else [data]), "open-meteo default"
             except Exception:
-                return [], "offline_mock"
+                return [], "unavailable"
+
+    @staticmethod
+    def _rows_from_result(
+        result: dict[str, Any], now: datetime
+    ) -> list[tuple[datetime, float | None, float | None]]:
+        try:
+            hourly = result["hourly"]
+            raw_times = hourly["time"]
+            precipitation = hourly["precipitation"]
+            if not isinstance(raw_times, list) or not isinstance(precipitation, list):
+                return []
+            if len(raw_times) != len(precipitation):
+                return []
+            times = [datetime.fromisoformat(value).replace(tzinfo=IST) for value in raw_times]
+            return forecast_rows(times, precipitation, now)
+        except (KeyError, TypeError, ValueError):
+            return []
+
+    def _results_are_usable(self, results: list[dict[str, Any]], now: datetime) -> bool:
+        if len(results) != len(self.hotspots):
+            return False
+        for result in results:
+            rows = self._rows_from_result(result, now)
+            if len(rows) != LOOKAHEAD_HOURS:
+                return False
+            if any(
+                next_row[0] - current_row[0] != timedelta(hours=1)
+                for current_row, next_row in zip(rows, rows[1:])
+            ):
+                return False
+            if any(
+                one_hour is None
+                or not math.isfinite(one_hour)
+                or one_hour < 0
+                or three_hours is None
+                or not math.isfinite(three_hours)
+                or three_hours < 0
+                for _, one_hour, three_hours in rows
+            ):
+                return False
+        return True
 
     def get_risk_assessment(self, force_refresh: bool = False) -> dict[str, Any]:
         now = datetime.now(IST)
         cached = self._cache.get("forecast")
+        cache_age = int(time.time() - cached["at"]) if cached else None
+        forecast_status = "unavailable"
         if (
             not force_refresh
             and cached
-            and (time.time() - cached["at"] < CACHE_SECONDS)
+            and cache_age is not None
+            and cache_age < self.settings.forecast_cache_seconds
+            and self._results_are_usable(cached["results"], now)
         ):
             results = cached["results"]
             model_used = cached["model_used"]
+            forecast_status = "cached"
         else:
-            results, model_used = self._fetch_live_forecast()
-            if results:
+            fetched_results, fetched_model = self._fetch_live_forecast()
+            if self._results_are_usable(fetched_results, now):
+                results = fetched_results
+                model_used = fetched_model
                 self._cache["forecast"] = {
                     "at": time.time(),
                     "results": results,
                     "model_used": model_used,
                 }
-            elif cached:
+                cache_age = 0
+                forecast_status = "live"
+            elif (
+                cached
+                and cache_age is not None
+                and cache_age <= self.settings.forecast_stale_cache_seconds
+                and self._results_are_usable(cached["results"], now)
+            ):
                 results = cached["results"]
                 model_used = cached["model_used"]
+                forecast_status = "stale"
+            else:
+                results = []
+                model_used = "unavailable"
+                cache_age = None
 
         out = []
         if results and len(results) == len(self.hotspots):
             for h, res in zip(self.hotspots, results):
-                times = [
-                    datetime.fromisoformat(t).replace(tzinfo=IST)
-                    for t in res["hourly"]["time"]
-                ]
-                rows = forecast_rows(times, res["hourly"]["precipitation"], now)
+                rows = self._rows_from_result(res, now)
                 out.append(assess_hotspot(h, self.model, rows, self.floods.get(h["id"], [])))
         else:
-            # Generate deterministic fallback/mock for dry/offline demo conditions
             for h in self.hotspots:
-                out.append(
-                    assess_hotspot(
-                        h,
-                        self.model,
-                        [(now + timedelta(hours=i), 0.0, 0.0) for i in range(1, 25)],
-                        self.floods.get(h["id"], []),
-                    )
-                )
+                out.append(assess_hotspot(h, self.model, [], self.floods.get(h["id"], [])))
 
         return {
             "generated_at": now.isoformat(),
             "forecast_model_used": model_used,
+            "forecast_status": forecast_status,
+            "forecast_age_seconds": cache_age,
             "lookahead_hours": LOOKAHEAD_HOURS,
             "disclaimer": DISCLAIMER,
             "credit": "Weather data by Open-Meteo.com",

@@ -1,4 +1,5 @@
 export type SourceLabel =
+  | "esp32"
   | "arduino"
   | "simulated_sensor"
   | "simulated_leak"
@@ -31,7 +32,7 @@ export interface SensorReading {
   water_depth_cm: number;
   distance_cm: number;
   timestamp: string;
-  source: "arduino" | "simulated_sensor";
+  source: "esp32" | "arduino" | "simulated_sensor";
 }
 
 export interface LeakMeasurement {
@@ -60,7 +61,6 @@ export interface Incident {
 
 export interface IncidentStatusUpdate {
   status: IncidentStatus;
-  assignee?: string | null;
 }
 
 export interface DashboardSummary {
@@ -71,9 +71,11 @@ export interface DashboardSummary {
   incidents_by_status: Partial<Record<IncidentStatus, number>>;
   latest_reading_at: string | null;
   generated_at: string;
-  active_flood_alerts?: number;
+  active_flood_alerts?: number | null;
   total_hotspots?: number;
   active_community_reports?: number;
+  underpass_dataset: "available" | "unavailable";
+  flood_risk_status: "known" | "unknown";
 }
 
 export interface HealthResponse {
@@ -122,6 +124,8 @@ export interface UnderpassRiskItem {
 export interface UnderpassRiskResponse {
   generated_at: string;
   forecast_model_used: string;
+  forecast_status: "live" | "cached" | "stale" | "unavailable";
+  forecast_age_seconds: number | null;
   lookahead_hours: number;
   disclaimer: string;
   credit: string;
@@ -129,15 +133,19 @@ export interface UnderpassRiskResponse {
 }
 
 export interface CommunityReportCreate {
+  report_id: string;
   hotspot_id: string;
+  latitude: number;
+  longitude: number;
   status: CommunityReportStatus;
   notes?: string | null;
-  image_url?: string | null;
 }
 
 export interface CommunityReport {
   report_id: string;
   hotspot_id: string;
+  latitude?: number | null;
+  longitude?: number | null;
   status: CommunityReportStatus;
   timestamp: string;
   notes?: string | null;

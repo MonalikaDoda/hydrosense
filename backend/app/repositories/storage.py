@@ -1,7 +1,7 @@
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 from typing import Protocol
 from uuid import UUID
 
@@ -9,13 +9,19 @@ from app.schemas import CommunityReport, Incident, IncidentStatus, SensorReading
 
 
 class StorageRepository(Protocol):
+    def check_health(self) -> None: ...
+
     def add_reading(self, reading: SensorReading) -> None: ...
 
     def list_readings(self, limit: int) -> list[SensorReading]: ...
 
     def add_incident(self, incident: Incident) -> None: ...
 
-    def list_incidents(self) -> list[Incident]: ...
+    def add_incident_if_not_recent(
+        self, incident: Incident, cooldown_start: datetime
+    ) -> bool: ...
+
+    def list_incidents(self, limit: int = 1000) -> list[Incident]: ...
 
     def get_incident(self, incident_id: UUID) -> Incident | None: ...
 
@@ -23,21 +29,28 @@ class StorageRepository(Protocol):
         self, incident_id: UUID, status: IncidentStatus, updated_at: datetime
     ) -> Incident | None: ...
 
-    def add_community_report(self, report: CommunityReport) -> None: ...
+    def add_community_report(self, report: CommunityReport) -> bool: ...
+
+    def get_community_report(self, report_id: UUID) -> CommunityReport | None: ...
 
     def list_community_reports(
         self,
         hotspot_id: str | None = None,
         active_only: bool = True,
         max_age_minutes: int = 45,
+        limit: int = 1000,
     ) -> list[CommunityReport]: ...
 
 
 class MemoryRepository:
     def __init__(self) -> None:
+        self._lock = RLock()
         self.readings: list[SensorReading] = []
         self.incidents: list[Incident] = []
         self.reports: list[CommunityReport] = []
+
+    def check_health(self) -> None:
+        return None
 
     def add_reading(self, reading: SensorReading) -> None:
         self.readings.append(reading)
@@ -48,8 +61,23 @@ class MemoryRepository:
     def add_incident(self, incident: Incident) -> None:
         self.incidents.append(incident)
 
-    def list_incidents(self) -> list[Incident]:
-        return sorted(self.incidents, key=lambda item: item.created_at, reverse=True)
+    def add_incident_if_not_recent(
+        self, incident: Incident, cooldown_start: datetime
+    ) -> bool:
+        with self._lock:
+            duplicate = any(
+                item.hazard_type == incident.hazard_type
+                and item.location_id == incident.location_id
+                and cooldown_start <= item.created_at <= incident.created_at
+                for item in self.incidents
+            )
+            if duplicate:
+                return False
+            self.incidents.append(incident)
+            return True
+
+    def list_incidents(self, limit: int = 1000) -> list[Incident]:
+        return sorted(self.incidents, key=lambda item: item.created_at, reverse=True)[:limit]
 
     def get_incident(self, incident_id: UUID) -> Incident | None:
         return next(
@@ -68,14 +96,21 @@ class MemoryRepository:
         ]
         return updated
 
-    def add_community_report(self, report: CommunityReport) -> None:
+    def add_community_report(self, report: CommunityReport) -> bool:
+        if self.get_community_report(report.report_id) is not None:
+            return False
         self.reports.append(report)
+        return True
+
+    def get_community_report(self, report_id: UUID) -> CommunityReport | None:
+        return next((item for item in self.reports if item.report_id == report_id), None)
 
     def list_community_reports(
         self,
         hotspot_id: str | None = None,
         active_only: bool = True,
         max_age_minutes: int = 45,
+        limit: int = 1000,
     ) -> list[CommunityReport]:
         now = datetime.now(UTC)
         cutoff = now - timedelta(minutes=max_age_minutes)
@@ -87,6 +122,8 @@ class MemoryRepository:
             if active_only and not is_fresh:
                 continue
             out.append(r.model_copy(update={"is_active": is_fresh}))
+            if len(out) >= limit:
+                break
         return out
 
 
@@ -94,7 +131,6 @@ class JsonFileRepository(MemoryRepository):
     def __init__(self, path: Path) -> None:
         super().__init__()
         self.path = path
-        self._lock = Lock()
         self._load()
 
     def _load(self) -> None:
@@ -128,6 +164,15 @@ class JsonFileRepository(MemoryRepository):
             super().add_incident(incident)
             self._save()
 
+    def add_incident_if_not_recent(
+        self, incident: Incident, cooldown_start: datetime
+    ) -> bool:
+        with self._lock:
+            created = super().add_incident_if_not_recent(incident, cooldown_start)
+            if created:
+                self._save()
+            return created
+
     def update_incident_status(
         self, incident_id: UUID, status: IncidentStatus, updated_at: datetime
     ) -> Incident | None:
@@ -137,7 +182,9 @@ class JsonFileRepository(MemoryRepository):
                 self._save()
             return incident
 
-    def add_community_report(self, report: CommunityReport) -> None:
+    def add_community_report(self, report: CommunityReport) -> bool:
         with self._lock:
-            super().add_community_report(report)
-            self._save()
+            created = super().add_community_report(report)
+            if created:
+                self._save()
+            return created

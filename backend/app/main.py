@@ -1,10 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.config import Settings, get_settings
 from app.repositories import DynamoDbRepository, JsonFileRepository, StorageRepository
-from app.schemas import HealthResponse
+from app.schemas import HealthResponse, ReadinessResponse
 from app.services import UnderpassRiskService, WaterReadingService
 
 
@@ -15,6 +15,7 @@ def create_repository(settings: Settings) -> StorageRepository:
             incidents_table_name=settings.dynamodb_incidents_table,
             reports_table_name=settings.dynamodb_reports_table,
             region_name=settings.aws_region,
+            max_scan_items=settings.dynamodb_max_scan_items,
         )
     return JsonFileRepository(settings.storage_path)
 
@@ -22,8 +23,9 @@ def create_repository(settings: Settings) -> StorageRepository:
 def create_app(
     repository: StorageRepository | None = None,
     underpass_service: UnderpassRiskService | None = None,
+    settings: Settings | None = None,
 ) -> FastAPI:
-    settings = get_settings()
+    settings = settings or get_settings()
     application = FastAPI(
         title="HydroSense API",
         version="0.2.0",
@@ -43,7 +45,8 @@ def create_app(
         application.state.repository, settings
     )
     application.state.underpass_service = (
-        underpass_service or UnderpassRiskService(settings)
+        underpass_service
+        or UnderpassRiskService(settings, data_dir=settings.underpass_data_dir)
     )
     application.include_router(router)
 
@@ -51,6 +54,23 @@ def create_app(
     def health() -> HealthResponse:
         return HealthResponse(
             status="ok", service="hydrosense-api", version=application.version
+        )
+
+    @application.get("/ready", response_model=ReadinessResponse, tags=["system"])
+    def readiness() -> ReadinessResponse:
+        try:
+            application.state.repository.check_health()
+        except Exception as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Persistent storage is unavailable.",
+            ) from error
+        return ReadinessResponse(
+            status="ready",
+            storage="available",
+            underpass_dataset=(
+                "available" if application.state.underpass_service.is_available else "unavailable"
+            ),
         )
 
     return application
