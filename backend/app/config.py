@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     aws_region: str = "ap-south-1"
     dynamodb_readings_table: str = "hydrosense-readings-dev"
     dynamodb_incidents_table: str = "hydrosense-incidents-dev"
+    dynamodb_reports_table: str = "hydrosense-reports-dev"
     water_alert_threshold_cm: float = 24
     alert_cooldown_seconds: int = 300
     demo_latitude: float = 28.6139

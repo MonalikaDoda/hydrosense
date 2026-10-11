@@ -6,10 +6,12 @@ The backend Pydantic models in `backend/app/schemas/contracts.py` are the valida
 
 ## Shared enums
 
-- Source: `esp32`, `simulated_sensor`, `simulated_leak`, `public_dataset`, `operator_report`
+- Source: `esp32`, `simulated_sensor`, `simulated_leak`, `public_dataset`, `operator_report`, `community_report`, `forecast`
 - Incident status: `open`, `assigned`, `verified`, `resolved`, `dismissed`
 - Severity: `low`, `moderate`, `high`, `very_high`
 - Hazard type: `high_water_level`, `flood_risk`, `suspected_leak`
+- Underpass Risk Tier: `green`, `yellow`, `orange`, `red`, `unknown`
+- Community Report Status: `flooded`, `passable`, `not_flooded`
 
 ## Sensor reading
 
@@ -25,20 +27,6 @@ The backend Pydantic models in `backend/app/schemas/contracts.py` are the valida
 ```
 
 Depth and distance must be non-negative. Source must be `esp32` or `simulated_sensor`.
-
-## Leak measurement
-
-```json
-{
-  "location_id": "demo-supply-zone-01",
-  "pressure_kpa": 180.0,
-  "flow_lpm": 42.0,
-  "timestamp": "2026-10-10T10:30:00Z",
-  "source": "simulated_leak"
-}
-```
-
-Pressure and flow must be non-negative. Sprint 0 permits only the clearly synthetic `simulated_leak` source.
 
 ## Incident
 
@@ -60,38 +48,71 @@ Pressure and flow must be non-negative. Sprint 0 permits only the clearly synthe
 }
 ```
 
-Confidence is in the inclusive range 0-1. Coordinates use WGS84 decimal degrees. Evidence is hazard-specific JSON.
-
-## Dashboard summary
+## Community Flood Report
 
 ```json
 {
-  "total_incidents": 3,
-  "open_incidents": 2,
-  "high_priority_incidents": 1,
-  "incidents_by_hazard": {"high_water_level": 1, "suspected_leak": 2},
-  "incidents_by_status": {"open": 2, "verified": 1},
-  "latest_reading_at": "2026-10-10T10:30:00Z",
-  "generated_at": "2026-10-10T10:31:00Z"
+  "report_id": "550e8400-e29b-41d4-a716-446655440000",
+  "hotspot_id": "zakhira",
+  "status": "flooded",
+  "timestamp": "2026-10-10T11:00:00Z",
+  "notes": "Underpass submerged near railway line, traffic halted",
+  "image_url": null,
+  "is_active": true,
+  "source": "community_report"
+}
+```
+
+Reports remain active for 45 minutes; expired reports are filtered immediately by the backend API.
+The request contract does not accept AI assessment fields. `ai_assessment` is nullable in stored responses and remains empty unless a future server-side integration performs and validates a real model invocation.
+
+## Underpass Risk Forecast
+
+```json
+{
+  "generated_at": "2026-10-10T11:00:00+05:30",
+  "forecast_model_used": "ecmwf_ifs",
+  "lookahead_hours": 24,
+  "disclaimer": "Prototype. Estimated risk, not an official warning.",
+  "credit": "Weather data by Open-Meteo.com",
+  "hotspots": [
+    {
+      "id": "zakhira",
+      "name": "Zakhira underpass",
+      "lat": 28.66,
+      "lon": 77.143,
+      "tier": "green",
+      "ratio": 0.12,
+      "limit": {"rain1h_mm": 2.2, "rain3h_mm": 4.4},
+      "limit_is_own": true,
+      "evidence": "based on 13 recorded floods",
+      "why": "Forecast rain for next 24 h is well below limit.",
+      "forecast": {"max_1h_mm": 0.0, "max_3h_mm": 0.0, "window_start": null, "window_end": null}
+    }
+  ]
 }
 ```
 
 ## Endpoint agreement
 
-| Method | Path | Request | Response | Sprint |
+| Method | Path | Request | Response | Description |
 |---|---|---|---|---|
-| `GET` | `/health` | None | `HealthResponse` | Implemented in Sprint 0 |
-| `GET` | `/api/v1/dashboard/summary` | None | `DashboardSummary` | Implemented in Sprint 1 |
-| `GET` | `/api/v1/readings/latest` | `limit` from 1-100 | `SensorReading[]` | Implemented in Sprint 1 |
-| `POST` | `/api/v1/readings` | `SensorReading` | `SensorReading`, `201` | Implemented in Sprint 1 |
-| `POST` | `/api/v1/leak-measurements` | `LeakMeasurement` | Accepted measurement/result, `201` | Sprint 1 |
-| `GET` | `/api/v1/incidents` | Optional `hazard_type`, `status` | `Incident[]` | Implemented in Sprint 1 |
-| `GET` | `/api/v1/incidents/{incident_id}` | None | `Incident` | Implemented in Sprint 1 |
-| `PATCH` | `/api/v1/incidents/{incident_id}` | `IncidentStatusUpdate` | `Incident` | Implemented in Sprint 1 |
-| `POST` | `/api/v1/demo/trigger` | Demo scenario identifier | Created result | Sprint 2; demo mode only |
+| `GET` | `/health` | None | `HealthResponse` | System health check |
+| `GET` | `/api/v1/dashboard/summary` | None | `DashboardSummary` | Aggregate telemetry, open incidents, flood alerts |
+| `GET` | `/api/v1/readings/latest` | `limit` (1-100) | `SensorReading[]` | Historical ultrasonic sensor readings |
+| `POST` | `/api/v1/readings` | `SensorReading` | `SensorReading`, `201` | Ingest new sensor telemetry |
+| `GET` | `/api/v1/incidents` | Optional `hazard_type`, `status` | `Incident[]` | List water incidents |
+| `GET` | `/api/v1/incidents/{incident_id}` | None | `Incident` | Get single incident |
+| `PATCH` | `/api/v1/incidents/{incident_id}` | `IncidentStatusUpdate` | `Incident` | Transition incident lifecycle |
+| `GET` | `/api/v1/risk` | Optional `force_refresh` | `UnderpassRiskResponse` | Underpass flood risk when the reviewed dataset is installed |
+| `GET` | `/api/v1/underpass/hotspots` | None | `UnderpassHotspot[]` | Installed underpass metadata |
+| `GET` | `/api/v1/underpass/metrics` | None | `UnderpassEvaluationMetrics` | Evaluation metrics supplied by the installed dataset |
+| `GET` | `/api/v1/underpass/events` | Optional `outcome`, `hotspot_id`, `date` | `UnderpassEventRecord[]` | Reviewed historical events supplied by the installed dataset |
+| `GET` | `/api/v1/underpass/reports` | Optional `hotspot_id`, `active_only` | `CommunityReport[]` | Active ground community observations (45m freshness) |
+| `POST` | `/api/v1/underpass/reports` | `CommunityReportCreate` | `CommunityReport`, `201` | Submit community observation |
 
-Errors will use FastAPI's validation format during development. A stable application error envelope will be agreed before public deployment. Unknown JSON fields are rejected by shared Pydantic request models.
+The risk, hotspot, metric, and event endpoints return HTTP `503` when their required dataset files are not installed. The frontend displays that state explicitly and does not substitute mock risk, event, or evaluation data.
 
 ## Local persistence
 
-Sprint 1 uses a JSON-file repository at `backend/data/hydrosense.json` by default. The API and domain service depend on a `StorageRepository` protocol, allowing a DynamoDB adapter to replace the local repository without moving threshold or lifecycle logic. The local file is suitable for one development process only and is not production storage.
+HydroSense uses a JSON-file repository at `backend/data/hydrosense.json` for local persistence (readings, incidents, community reports). The domain services depend on a `StorageRepository` protocol, allowing a DynamoDB adapter to replace local storage without modifying business logic.

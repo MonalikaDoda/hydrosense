@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  HydroSense development persistence - two on-demand DynamoDB tables preserve
-  the existing reading and incident repository contracts for the hackathon.
+  HydroSense development persistence - three on-demand DynamoDB tables preserve
+  reading, incident, and community report repository contracts for the hackathon.
 
 Metadata:
   AWSToolsMetrics:
@@ -32,6 +32,11 @@ Parameters:
     Default: hydrosense-incidents-dev
     AllowedPattern: '^[a-zA-Z0-9_.-]{3,255}$'
     Description: Physical name used by the backend incidents repository.
+  ReportsTableName:
+    Type: String
+    Default: hydrosense-reports-dev
+    AllowedPattern: '^[a-zA-Z0-9_.-]{3,255}$'
+    Description: Physical name used by the backend community report repository.
 
 Resources:
   ReadingsTable:
@@ -102,6 +107,42 @@ Resources:
         - Key: ManagedBy
           Value: CloudFormation
 
+  ReportsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: stores unverified community observations for the active report window
+        must:
+          - HASH=report_id; repository writes UUID identifiers
+          - Application timestamp filtering defines exact freshness; TTL is cleanup only
+          - Delete with stack after hackathon; no retained participant data
+        mutable: change-with-constraints
+        mutability:
+          KeySchema: must-never-change
+    Properties:
+      TableName: !Ref ReportsTableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: report_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: report_id
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: HydroSense
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
 Outputs:
   ReadingsTableName:
     Description: DynamoDB table name for validated water-level readings.
@@ -115,3 +156,9 @@ Outputs:
   IncidentsTableArn:
     Description: DynamoDB table ARN for least-privilege runtime IAM.
     Value: !GetAtt IncidentsTable.Arn
+  ReportsTableName:
+    Description: DynamoDB table name for community observations.
+    Value: !Ref ReportsTable
+  ReportsTableArn:
+    Description: DynamoDB table ARN for least-privilege runtime IAM.
+    Value: !GetAtt ReportsTable.Arn

@@ -10,7 +10,7 @@ Metadata:
   com.aws.cloudformation.Context:
     arch: API Gateway HTTP API -> Lambda/Mangum -> existing FastAPI -> DynamoDB
     must:
-      - Runtime role can access only the two HydroSense dev tables and its log group
+      - Runtime role can access only the three HydroSense dev tables and its log group
       - Endpoint is public for hackathon demo; throttling and access logs stay enabled
     ref:
       - at: docs/aws-integration-plan.md
@@ -32,6 +32,11 @@ Parameters:
     Default: hydrosense-incidents-dev
     AllowedPattern: '^[a-zA-Z0-9_.-]{3,255}$'
     Description: Existing DynamoDB incidents table.
+  ReportsTableName:
+    Type: String
+    Default: hydrosense-reports-dev
+    AllowedPattern: '^[a-zA-Z0-9_.-]{3,255}$'
+    Description: Existing DynamoDB community reports table.
 
 Resources:
   ApiAccessLogGroup:
@@ -66,7 +71,7 @@ Resources:
         why: dedicated runtime identity; avoids developer/admin credentials in hosted code
         must:
           - No table create/delete permissions
-          - DynamoDB resources remain limited to the two configured table ARNs
+          - DynamoDB resources remain limited to the three configured table ARNs
         mutable: change-with-constraints
     Properties:
       AssumeRolePolicyDocument:
@@ -91,6 +96,7 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ReadingsTableName}
                   - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${IncidentsTableName}
+                  - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ReportsTableName}
         - PolicyName: FunctionLogDelivery
           PolicyDocument:
             Version: '2012-10-17'
@@ -166,6 +172,7 @@ Resources:
           STORAGE_BACKEND: dynamodb
           DYNAMODB_READINGS_TABLE: !Ref ReadingsTableName
           DYNAMODB_INCIDENTS_TABLE: !Ref IncidentsTableName
+          DYNAMODB_REPORTS_TABLE: !Ref ReportsTableName
           FRONTEND_ORIGIN: !Ref FrontendOrigin
       Events:
         ProxyRoute:

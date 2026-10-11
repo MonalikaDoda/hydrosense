@@ -5,6 +5,8 @@ from uuid import uuid4
 
 from app.repositories import DynamoDbRepository
 from app.schemas import (
+    CommunityReport,
+    CommunityReportStatus,
     HazardType,
     Incident,
     IncidentStatus,
@@ -33,21 +35,23 @@ class FakeTable:
         return {"Items": list(self.items.values())}
 
 
-def make_repository() -> tuple[DynamoDbRepository, FakeTable, FakeTable]:
+def make_repository() -> tuple[DynamoDbRepository, FakeTable, FakeTable, FakeTable]:
     readings = FakeTable("device_id")
     incidents = FakeTable("incident_id")
+    reports = FakeTable("report_id")
     repository = DynamoDbRepository(
         "readings",
         "incidents",
         "ap-south-1",
         readings_table=readings,
         incidents_table=incidents,
+        reports_table=reports,
     )
-    return repository, readings, incidents
+    return repository, readings, incidents, reports
 
 
 def test_reading_round_trips_with_decimal_storage() -> None:
-    repository, readings_table, _ = make_repository()
+    repository, readings_table, _, _ = make_repository()
     reading = SensorReading(
         device_id="hydrosense-simulator-01",
         location_id="demo-zone-01",
@@ -65,7 +69,7 @@ def test_reading_round_trips_with_decimal_storage() -> None:
 
 
 def test_incident_status_update_persists() -> None:
-    repository, _, _ = make_repository()
+    repository, _, _, _ = make_repository()
     timestamp = datetime.now(UTC)
     incident = Incident(
         incident_id=uuid4(),
@@ -90,3 +94,20 @@ def test_incident_status_update_persists() -> None:
 
     assert updated is not None
     assert repository.get_incident(incident.incident_id).status == IncidentStatus.VERIFIED
+
+
+def test_community_report_round_trips_with_ttl_metadata() -> None:
+    repository, _, _, reports_table = make_repository()
+    report = CommunityReport(
+        report_id=uuid4(),
+        hotspot_id="zakhira",
+        status=CommunityReportStatus.FLOODED,
+        timestamp=datetime.now(UTC),
+        notes="Water accumulating",
+    )
+
+    repository.add_community_report(report)
+    stored = next(iter(reports_table.items.values()))
+
+    assert stored["expires_at"] > int(report.timestamp.timestamp())
+    assert repository.list_community_reports(hotspot_id="zakhira") == [report]

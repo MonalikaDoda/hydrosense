@@ -36,3 +36,4 @@ coverage/
 
 # Local development persistence
 backend/data/
+/data/
