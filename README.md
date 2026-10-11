@@ -6,8 +6,8 @@
 
 - **Live application:** [https://d348efecbg3b7i.cloudfront.net/](https://d348efecbg3b7i.cloudfront.net/)
 - **GitHub repository:** [https://github.com/mukulpythondev/hydrosense](https://github.com/mukulpythondev/hydrosense)
-- **YouTube demonstration:** `[ADD_YOUTUBE_VIDEO_URL]`
-- **AWS Builder blog post:** `[ADD_AWS_BUILDER_BLOG_URL]`
+- **YouTube demonstration:** [https://youtu.be/Pu9GKFUq06w](https://youtu.be/Pu9GKFUq06w)
+- **AWS Builder blog post:** [https://builder.aws.com/content/3KYOzFPGl5ju2toCMaktLoaw7MY/hydrosense](https://builder.aws.com/content/3KYOzFPGl5ju2toCMaktLoaw7MY/hydrosense)
 
 ## Problem statement
 
@@ -39,17 +39,15 @@ AI photo advisories describe visible evidence only. They are not a depth measure
 
 ## Overall system architecture
 
-<!-- TODO: Add the overall HydroSense architecture diagram at docs/architecture/hydrosense-overall.png -->
-![Overall HydroSense architecture (to be added)](docs/architecture/hydrosense-overall.png)
+![Overall HydroSense architecture: data sources, Arduino edge sensing, backend risk assessment, community reports, Bedrock image assessment, storage, and dashboard](docs/architecture/hydrosense-overall.png)
 
-Reserved at [docs/architecture/hydrosense-overall.png](docs/architecture/README.md). The diagram will show: rainfall and historical data sources, Arduino-based water-level sensing and its gateway path, backend risk assessment, community report and image-upload flow, Amazon Bedrock image assessment, persistent storage, and the dashboard.
+Shows the full designed system: rainfall and historical data sources, Arduino-based water-level sensing and its gateway path, backend risk assessment, community report and image-upload flow, Amazon Bedrock image assessment, persistent storage, and the dashboard. The Arduino-to-gateway data path is part of the system design; it is not yet streaming to the deployed backend (see [Roadmap](#roadmap)).
 
 ## AWS architecture
 
-<!-- TODO: Add the AWS-only architecture diagram at docs/architecture/hydrosense-aws.png -->
-![AWS infrastructure architecture (to be added)](docs/architecture/hydrosense-aws.png)
+![AWS infrastructure: CloudFront, S3, API Gateway, Lambda, DynamoDB, private evidence bucket, and Amazon Bedrock Nova Lite](docs/architecture/hydrosense-aws.png)
 
-Reserved at [docs/architecture/hydrosense-aws.png](docs/architecture/README.md). The diagram will show only verified, deployed services:
+Only verified, deployed services are shown:
 
 - **Amazon CloudFront** serving the React SPA from a private **Amazon S3** bucket (origin access control, no public bucket access).
 - **Amazon API Gateway (HTTP API)** fronting an **AWS Lambda** function running FastAPI via Mangum.
