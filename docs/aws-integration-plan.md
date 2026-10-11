@@ -2,32 +2,52 @@
 
 ## Status
 
-AWS DynamoDB persistence, hosted FastAPI backend, and S3/CloudFront frontend were **implemented and verified on 2026-10-10** in `ap-south-1`. Local JSON remains the default development backend; DynamoDB is enabled explicitly with `STORAGE_BACKEND=dynamodb`. No hardware, AWS IoT or SNS milestone is implied by this simulator-backed proof.
+AWS DynamoDB persistence, hosted FastAPI, and an S3/CloudFront frontend were **implemented and verified on 2026-10-10** in `ap-south-1`. That historical deployment is still the pre-integration vertical slice. Local JSON remains the default development backend; DynamoDB is enabled explicitly with `STORAGE_BACKEND=dynamodb`. No hardware, AWS IoT, SNS, Bedrock, or reviewed underpass-dataset milestone is implied by this simulator-backed proof.
 
-The `hydrosense-data-dev` CloudFormation stack manages these active, encrypted, on-demand tables:
+### Verified deployed state
 
-- `hydrosense-readings-dev`
-- `hydrosense-incidents-dev`
+Read-only stack inspection on 2026-10-11 confirmed:
 
-The stack is defined in `infrastructure/dynamodb.yaml`. Its stateful resources deliberately use `DeletionPolicy: Delete` and `UpdateReplacePolicy: Delete` because this is an ephemeral hackathon environment scheduled for teardown, not a production retention policy.
+- `hydrosense-data-dev` is `CREATE_COMPLETE` and contains only `hydrosense-readings-dev` and `hydrosense-incidents-dev`.
+- `hydrosense-api-dev` is `UPDATE_COMPLETE` and runs the pre-hardening Lambda/API configuration with no reports-table or Cognito parameters.
+- `hydrosense-frontend-dev` is `CREATE_COMPLETE` and serves the pre-integration build from private S3 through CloudFront OAC.
+- API URL: `https://0795acig2g.execute-api.ap-south-1.amazonaws.com`.
+- Dashboard URL: `https://d348efecbg3b7i.cloudfront.net`.
+- A browser verification on 2026-10-11 loaded readings, incidents, and dashboard summary from the live API with HTTP 200 responses, no failed requests, and no console errors. It displayed the verified 25 cm simulated reading and its incident.
+- The deployed underpass risk, hotspot, metric, event, and community-report routes all return HTTP 404 because that integration is not in the deployed Lambda build.
+- `hydrosense-reports-dev` does not exist. The live Lambda role has no reports-table permission and remains limited to `DescribeTable`, `GetItem`, `PutItem`, `Scan`, and `UpdateItem` on the readings and incidents tables.
+- The deployed API has only the unauthenticated `ANY /{proxy+}` route. No Cognito resources are present in the stack.
 
-The `hydrosense-api-dev` SAM/CloudFormation stack manages:
+### Current template and code state
 
-- API Gateway HTTP API: `https://0795acig2g.execute-api.ap-south-1.amazonaws.com`
-- Lambda function: `hydrosense-api-dev-api`
-- A dedicated execution role restricted to the two table ARNs and function log delivery
-- API access and Lambda log groups with seven-day retention
+The current, undeployed templates add or change:
 
-The stack is defined in `infrastructure/backend.yaml`. The public demo API is throttled to 10 requests per second with a burst of 20. It is not a production-authenticated endpoint.
+- A third DynamoDB table, `hydrosense-reports-dev`, with TTL cleanup on `expires_at`.
+- DynamoDB transaction permission for atomic incident cooldown markers.
+- Bounded scans, reading-age validation, bounded forecast caching, and `/ready` dependency checks.
+- A Cognito operator user pool, no-secret SPA client, managed login domain, authorization-code + PKCE, required TOTP MFA, refresh rotation, and token revocation.
+- API Gateway JWT authorization on exactly `POST /api/v1/readings`, `POST /api/v1/underpass/reports`, and `PATCH /api/v1/incidents/{incident_id}`. Read routes remain public.
+- A production frontend build gate requiring the API URL and all three Cognito outputs.
+- A private S3/CloudFront frontend with TLS-only bucket access and explicit API, Cognito, and OpenStreetMap CSP origins.
+- An explicit `UNDERPASS_DATA_DIR` Lambda setting. Missing or malformed reviewed artifacts leave only the optional underpass module unavailable.
 
-The `hydrosense-frontend-dev` CloudFormation stack manages:
+The current application tests and frontend build pass locally, but the undeployed templates have not received a fresh SAM build, SAM validation, or `cfn-lint` run. SAM CLI, `cfn-lint`, and `cfn-guard` are currently unavailable on this workstation, and the existing `.aws-sam/build` output is stale and unsafe to deploy. No change set has been created. The likely update is additive for the reports table and Cognito resources, plus in-place API, Lambda, IAM, and frontend changes; that must still be confirmed by reviewing CloudFormation change sets.
 
-- Private encrypted S3 origin with all public access blocked
-- CloudFront distribution using origin access control and HTTPS redirects
-- SPA fallback routing and security response headers
-- Dashboard URL: `https://d348efecbg3b7i.cloudfront.net`
+The templates remain development-oriented. Stateful resources use `DeletionPolicy: Delete` and `UpdateReplacePolicy: Delete`, DynamoDB point-in-time recovery is not configured, and logs retain only seven days. Those choices are explicit hackathon tradeoffs, not production retention policy.
 
-## First cloud milestone
+### Compliance scan
+
+CloudFormation Guard 3.2.1 was installed from the official Windows x86_64 release after verifying SHA-256 `52af28c02081f1067c6710c08619d359899734ec59d51f17f68e1b4b396a1203`. The AWS Guard Rules Registry was pinned to commit `7f7340c26ae5d5e8874651dbffeb12e0e9f505b6`, and its Well-Architected Security Pillar ruleset was run against all three templates.
+
+The scan found these unresolved hardening items:
+
+- Backend: the Lambda role uses inline policies; CloudWatch log groups do not use a customer-managed KMS key.
+- Data: DynamoDB tables use encryption at rest but not customer-managed KMS keys.
+- Frontend: the static asset bucket does not enable access logging or versioning.
+
+No suppressions were added. These findings require an explicit cost, operations, and retention decision before calling the templates production-ready.
+
+## Original cloud milestone
 
 Add a DynamoDB implementation of the existing `StorageRepository` protocol and select it with configuration. Keep threshold processing, incident creation, duplicate suppression, API schemas and frontend contracts unchanged.
 
@@ -44,7 +64,8 @@ AWS IoT Core, SNS and S3 are not prerequisites for this first proof. They should
 
 - One DynamoDB readings table: `hydrosense-readings-dev`.
 - One DynamoDB incidents table: `hydrosense-incidents-dev`.
-- One application IAM principal or execution role restricted to those two tables.
+- One DynamoDB reports table: `hydrosense-reports-dev` in the current template.
+- One application IAM principal or execution role restricted to those three tables.
 - API Gateway HTTP API and one on-demand Python 3.12 Lambda function.
 - CloudWatch access and function log groups with seven-day retention.
 
@@ -57,21 +78,53 @@ STORAGE_BACKEND=json|dynamodb
 AWS_REGION=ap-south-1
 DYNAMODB_READINGS_TABLE=hydrosense-readings-dev
 DYNAMODB_INCIDENTS_TABLE=hydrosense-incidents-dev
+DYNAMODB_REPORTS_TABLE=hydrosense-reports-dev
+DYNAMODB_MAX_SCAN_ITEMS=1000
+UNDERPASS_DATA_DIR=/var/task/data/underpass
 ```
 
 Use the standard AWS SDK credential provider chain. For local development, use an authenticated AWS profile or short-lived environment credentials supplied outside the repository. Do not add access keys, session tokens, phone numbers or certificates to `.env.example`, source code, logs or Git.
 
 ## Runtime IAM permissions
 
-Restrict resources to the two exact table ARNs and allow only:
+Restrict resources to the three exact table ARNs and allow only:
 
 - `dynamodb:PutItem`
 - `dynamodb:GetItem`
 - `dynamodb:UpdateItem`
 - `dynamodb:Scan`
 - `dynamodb:DescribeTable`
+- `dynamodb:TransactWriteItems`
 
-The runtime role must not create or delete tables. Provisioning credentials may separately use `dynamodb:CreateTable`, `dynamodb:UpdateTable`, `dynamodb:DescribeTable` and tagged-resource deletion during controlled teardown.
+The runtime role must not create or delete tables. Provisioning credentials may separately manage resources during a controlled deployment or teardown. Bounded scans are acceptable for this small development dataset only; production scale requires query-oriented keys/indexes and cursor pagination.
+
+## Reviewed release order (not executed)
+
+No change set, deployment, asset upload, or cache invalidation has been run for this release. Before any mutation, create and inspect change sets in this order:
+
+1. Data stack: add only the reports table and TTL configuration. Reject any change set that replaces or deletes the readings or incidents tables.
+2. Backend stack: add reports permissions, Cognito resources, JWT route authorization, and the hardened Lambda package. Verify core read routes, protected mutation responses, `/ready`, and optional underpass HTTP 503 behavior before proceeding.
+3. Frontend stack: pass the exact API origin and `https://<CognitoDomain output>` as `CognitoOrigin`; reject distribution or bucket replacement.
+4. Frontend assets: build with the actual API and Cognito outputs, perform a local artifact review, then upload and invalidate CloudFront only after explicit approval.
+
+The reviewed underpass artifacts are a separate prerequisite, not a deployment-generated dataset. Keep the module unavailable until those files have provenance and schema review. The existing readings, incidents, and summary paths are the rollback and smoke-test baseline at every stage.
+
+### Proposed change sets
+
+These names and actions are proposed only. No change set has been created.
+
+1. `hydrosense-data-dev-release-20261011`: update `hydrosense-data-dev` from `infrastructure/dynamodb.yaml`, preserving `Environment=dev`, `ReadingsTableName=hydrosense-readings-dev`, and `IncidentsTableName=hydrosense-incidents-dev`, and setting `ReportsTableName=hydrosense-reports-dev`. The only accepted resource action is `Add ReportsTable`; reject replacement, removal, or modification of the two existing tables.
+2. `hydrosense-api-dev-release-20261011`: create only after a fresh SAM container build and package inspection. Preserve the deployed frontend origin and existing table names; set the reports table and all bounded runtime parameters explicitly. Expected additions are the Cognito user pool, no-secret client, managed-login domain/branding, and SAM-generated permissions for the three protected mutation routes. Expected modifications are the Lambda package/configuration, runtime role policy, HTTP API authorization/CORS, and stage routes. Reject deletion or replacement of the API, function, log groups, or execution role unless separately reviewed.
+3. `hydrosense-frontend-dev-release-20261011`: update `hydrosense-frontend-dev` with the deployed API origin and the new Cognito HTTPS origin. No resource addition, deletion, bucket replacement, or distribution replacement is expected; reject any such action. Publish assets and invalidate CloudFront only after this stack update and explicit approval.
+
+The backend package gate is strict: its generated template must match the current source template; `app/services/underpass_risk.py` and all current routes must be present; `data/hydrosense.json`, caches, virtual environments, credentials, and unapproved underpass data must be absent; Linux-compatible dependencies and exact environment variables must be inspected before the backend change set is created.
+
+### Security hardening assessment
+
+- Replace the inline Lambda policies with a dedicated customer-managed policy only when its lifecycle and attachment are reviewed; keep the same exact table and log-group ARNs and action list. A managed policy improves governance but does not justify broader permissions.
+- For a production retention decision, create a dedicated rotating KMS key with a scoped key policy, then apply it to DynamoDB and CloudWatch Logs. This adds key cost and operational dependencies and is not silently introduced into the development stack.
+- Enable frontend bucket versioning before production publication. Add access logging only with a separate private encrypted log bucket and lifecycle policy; logging to the asset bucket itself is not acceptable.
+- Revisit the development `Delete` retention policies, seven-day logs, DynamoDB point-in-time recovery, and alarms before claiming production readiness.
 
 ## Verification gate
 

@@ -1,5 +1,5 @@
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
@@ -47,6 +47,13 @@ class RiskTier(StrEnum):
     ORANGE = "orange"
     RED = "red"
     UNKNOWN = "unknown"
+
+
+class ForecastStatus(StrEnum):
+    LIVE = "live"
+    CACHED = "cached"
+    STALE = "stale"
+    UNAVAILABLE = "unavailable"
 
 
 class CommunityReportStatus(StrEnum):
@@ -102,7 +109,6 @@ class Incident(ContractModel):
 
 class IncidentStatusUpdate(ContractModel):
     status: IncidentStatus
-    assignee: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class DashboardSummary(ContractModel):
@@ -113,15 +119,23 @@ class DashboardSummary(ContractModel):
     incidents_by_status: dict[IncidentStatus, int]
     latest_reading_at: AwareDatetime | None = None
     generated_at: AwareDatetime
-    active_flood_alerts: int = Field(default=0, ge=0)
+    active_flood_alerts: int | None = Field(default=None, ge=0)
     total_hotspots: int = Field(default=16, ge=0)
     active_community_reports: int = Field(default=0, ge=0)
+    underpass_dataset: Literal["available", "unavailable"] = "unavailable"
+    flood_risk_status: Literal["known", "unknown"] = "unknown"
 
 
 class HealthResponse(ContractModel):
     status: str
     service: str
     version: str
+
+
+class ReadinessResponse(ContractModel):
+    status: Literal["ready"]
+    storage: Literal["available"]
+    underpass_dataset: Literal["available", "unavailable"]
 
 
 class UnderpassHotspot(ContractModel):
@@ -158,8 +172,10 @@ class UnderpassRiskItem(ContractModel):
 
 
 class UnderpassRiskResponse(ContractModel):
-    generated_at: str
+    generated_at: AwareDatetime
     forecast_model_used: str
+    forecast_status: ForecastStatus
+    forecast_age_seconds: int | None = Field(default=None, ge=0)
     lookahead_hours: int
     disclaimer: str
     credit: str
@@ -167,15 +183,19 @@ class UnderpassRiskResponse(ContractModel):
 
 
 class CommunityReportCreate(ContractModel):
+    report_id: UUID
     hotspot_id: str = Field(min_length=1, max_length=100)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
     status: CommunityReportStatus
     notes: str | None = Field(default=None, max_length=1000)
-    image_url: str | None = Field(default=None, max_length=5_000_000)
 
 
 class CommunityReport(ContractModel):
     report_id: UUID
     hotspot_id: str
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
     status: CommunityReportStatus
     timestamp: AwareDatetime
     notes: str | None = None
@@ -185,12 +205,25 @@ class CommunityReport(ContractModel):
     ai_assessment: dict[str, Any] | None = None
 
 
+class EvaluationCounts(ContractModel):
+    floods_caught: int = Field(ge=0)
+    floods_missed: int = Field(ge=0)
+    false_alarms: int = Field(ge=0)
+    correct_clear: int = Field(ge=0)
+    n_flooded_rows: int = Field(ge=0)
+    n_clear_rows: int = Field(ge=0)
+
+
+class StormDayEvaluation(EvaluationCounts):
+    date: str = Field(min_length=1)
+
+
 class UnderpassEvaluationMetrics(ContractModel):
     n_rows: int
     n_storm_days: int
-    per_hotspot_thresholds: dict[str, Any]
-    pooled_only_baseline: dict[str, Any]
-    per_storm_day: list[dict[str, Any]]
+    per_hotspot_thresholds: EvaluationCounts
+    pooled_only_baseline: EvaluationCounts
+    per_storm_day: list[StormDayEvaluation]
     notes: list[str]
 
 
@@ -199,7 +232,7 @@ class UnderpassEventRecord(ContractModel):
     date: str
     hotspot_id: str
     underpass_name_in_source: str
-    outcome: str
+    outcome: Literal["flooded", "clear"]
     what_happened: str
     time_text: str | None = None
     time_confidence: str | None = None

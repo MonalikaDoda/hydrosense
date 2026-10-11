@@ -2,6 +2,8 @@
 
 The software vertical slice uses `scripts/simulate_sensor.py` until physical hardware is available. The simulator and ESP32 must send the same `SensorReading` JSON contract.
 
+Physical hardware work is outside the currently completed software phase. No bench, serial, Wi-Fi, or AWS IoT result has been verified in this repository; the checklist below remains a handoff, not evidence of completion.
+
 ## Required bench verification
 
 - [ ] Confirm ESP32 board powers and exposes a stable serial port.
