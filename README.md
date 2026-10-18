@@ -5,7 +5,6 @@
 ## Demo and project links
 
 - **Live application:** [https://d348efecbg3b7i.cloudfront.net/](https://d348efecbg3b7i.cloudfront.net/)
-- **GitHub repository:** [https://github.com/mukulpythondev/hydrosense](https://github.com/mukulpythondev/hydrosense)
 - **YouTube demonstration:** [https://youtu.be/fAbQ15Nhqpw](https://youtu.be/fAbQ15Nhqpw)
 - **AWS Builder blog post:** [https://builder.aws.com/content/3KYOzFPGl5ju2toCMaktLoaw7MY/hydrosense](https://builder.aws.com/content/3KYOzFPGl5ju2toCMaktLoaw7MY/hydrosense)
 
@@ -57,6 +56,14 @@ Only verified, deployed services are shown:
 - A least-privilege Lambda execution role scoped to only the three DynamoDB table ARNs and its own log group.
 
 Amazon Cognito and AWS IoT Core resources are defined in [infrastructure/backend.yaml](infrastructure/backend.yaml) but are **not part of the currently deployed environment** — the live API does not enforce authentication (see [Responsible AI and security](#responsible-ai-and-security)).
+
+## Team
+Built at Bharat Builds Delhi (AWS x WeMakeDevs, Oct 2026) by a team of four.
+
+- Mukul Rana: AWS integration, backend deployment, cloud storage, and Bedrock integration.
+- Rasleen: IoT and hardware integration, focusing on Arduino-based water-level sensing and gateway connectivity.
+- Monalika Doda: risk engine (rainfall pipeline, per-hotspot thresholds, leave-one-storm-out evaluation), historical flood dataset, 
+- Poojya Rajvanshi: Frontend development across the HydroSense application.
 
 ## Technology stack
 
